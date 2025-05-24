@@ -718,7 +718,7 @@ def play_hangman():
         # Alphabet keyboard
         st.subheader("Chọn chữ cái")
         alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-        cols = 7
+        cols = 14
         rows = [alphabet[i:i+cols] for i in range(0, len(alphabet), cols)]
         
         for row in rows:
