@@ -705,20 +705,14 @@ def play_hangman():
         
         # Alphabet keyboard
         st.subheader("Chọn chữ cái")
-        qwerty_rows = [
-            "QWERTYUIOP",
-            "ASDFGHJKL",
-            "ZXCVBNM"
-        ]
-        cols = 10        
-        for row in qwerty_rows:
-            padding = (cols - len(row)) // 2
+        alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        cols = 7
+        rows = [alphabet[i:i+cols] for i in range(0, len(alphabet), cols)]
+        
+        for row in rows:
             columns = st.columns(cols)
-            # cột trống bên trái
-            for i in range(padding):
-                columns[i].write("")
             for i, letter in enumerate(row):
-                with columns[i + padding]:
+                with columns[i]:
                     if letter in guessed_letters:
                         st.button(letter, disabled=True, key=f"letter_{letter}")
                     else:
