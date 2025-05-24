@@ -702,7 +702,19 @@ def play_hangman():
         st.write(f"Chuỗi thắng hiện tại: {st.session_state.hangman['current_win_streak']}")
         st.write(f"Chuỗi thắng dài nhất: {st.session_state.hangman['longest_win_streak']}")
         
-        
+        # Thêm CSS tùy chỉnh
+        st.markdown("""
+        <style>
+        @media (max-width: 600px) {
+            /* Điều chỉnh kích thước nút cho mobile */
+            button[kind="secondary"] {
+                min-width: 30px !important;
+                padding: 0.25rem !important;
+                font-size: 14px !important;
+            }
+        }
+        </style>
+        """, unsafe_allow_html=True)
         # Alphabet keyboard
         st.subheader("Chọn chữ cái")
         alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
