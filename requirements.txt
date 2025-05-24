@@ -1,0 +1,7 @@
+streamlit
+pandas
+requests
+gtts
+fpdf
+xhtml2pdf
+Pillow
