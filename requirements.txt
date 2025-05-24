@@ -5,3 +5,4 @@ gtts
 fpdf
 xhtml2pdf
 Pillow
+plotly
