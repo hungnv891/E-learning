@@ -15,9 +15,6 @@ import re
 from io import BytesIO
 from xhtml2pdf import pisa
 from PIL import Image
-import psycopg2
-from psycopg2 import sql
-from dotenv import load_dotenv
 
 st.set_page_config(page_title="Thi trắc nghiệm", layout="wide")
 
@@ -83,241 +80,179 @@ def local_css():
 
 local_css()
 
-# Load biến môi trường
-load_dotenv()
-
+# Kết nối SQLite
 def get_connection():
-    DATABASE_URL = os.getenv("postgresql://postgres:QCPHoXHOsmPqtKaHLVsKLEQyeZncnhtx@postgres.railway.internal:5432/railway")
-    if DATABASE_URL is None:
-        raise ValueError("DATABASE_URL environment variable not set")
-    return psycopg2.connect(DATABASE_URL, sslmode='require')
+    return sqlite3.connect("questions.db")
 
-def init_db():
-    """Khởi tạo database với tất cả các bảng cần thiết"""
-    conn = get_connection()
+# Khởi tạo database
+def init_db(conn):
     cursor = conn.cursor()
     
-    try:
-        # Bảng câu hỏi (thay AUTOINCREMENT bằng SERIAL)
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS questions (
-            id SERIAL PRIMARY KEY,
-            question TEXT NOT NULL,
-            answer_a TEXT NOT NULL,
-            answer_b TEXT NOT NULL,
-            answer_c TEXT NOT NULL,
-            answer_d TEXT NOT NULL,
-            answer_e TEXT,
-            correct_answer TEXT NOT NULL,
-            explanation TEXT,
-            topic TEXT NOT NULL,
-            level TEXT NOT NULL,
-            exam_code TEXT
-        )
-        """)
+    # Tạo bảng câu hỏi
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS questions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        topic TEXT,
+        level TEXT,
+        exam_code TEXT,
+        question TEXT,
+        answer_a TEXT,
+        answer_b TEXT,
+        answer_c TEXT,
+        answer_d TEXT,
+        answer_e TEXT,
+        correct_answer TEXT,
+        explanation TEXT
+    )
+    """)
+    
+    # Tạo bảng kết quả thi
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        topic TEXT,
+        level TEXT,
+        exam_code TEXT,
+        num_questions INTEGER,
+        correct_answers INTEGER,
+        duration INTEGER,
+        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        rewarded INTEGER DEFAULT 0
+    )
+    """)
+    
+    # Tạo bảng người dùng
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE,
+        password TEXT,
+        role TEXT,  
+        stickers INTEGER DEFAULT 0,
+        is_approved BOOLEAN DEFAULT 0
+    )
+    """)
+    
+    # Tạo bảng phần quà
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS rewards (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        description TEXT,
+        sticker_cost INTEGER,
+        stock INTEGER
+    )
+    """)
+    
+    # Tạo bảng lịch sử đổi quà
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS reward_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        reward_id INTEGER,
+        date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+    
+    # Thêm admin va user mặc định nếu chưa có
+    cursor.execute("SELECT * FROM users WHERE username = 'admin'")
+    if not cursor.fetchone():
+        cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
+                      ("admin", "admin123", "admin"))
+    cursor.execute("SELECT * FROM users WHERE username = 'danvy'")
+    if not cursor.fetchone():
+        cursor.execute(
+            "INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
+            ("danvy", "123456", "user")
+        )                  
+                      
+                      
+    # Tạo bảng cho Hangman
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS hangman_words (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        word TEXT NOT NULL,
+        hint TEXT NOT NULL,
+        topic TEXT NOT NULL,
+        difficulty TEXT NOT NULL,
+        added_by INTEGER,
+        date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(added_by) REFERENCES users(id)
+    )
+    """)
+    
+    # Tạo bảng lịch sử chơi Hangman
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS hangman_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        word_id INTEGER,
+        session_id TEXT,
+        result TEXT,  
+        wrong_guesses INTEGER,
+        date_played TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(word_id) REFERENCES hangman_words(id)
+    )
+    """) 
 
-        # Bảng kết quả thi
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS results (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER,
-            topic TEXT,
-            level TEXT,
-            exam_code TEXT,
-            num_questions INTEGER,
-            correct_answers INTEGER,
-            duration INTEGER,
-            date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            rewarded INTEGER DEFAULT 0
-        )
-        """)
+    # Tạo bảng lưu chuỗi thắng dài nhất của mỗi phiên
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS hangman_session_streaks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        session_id TEXT,
+        longest_win_streak INTEGER,
+        date_played TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )
+    """)
 
-        # Bảng người dùng (thay đổi CHECK constraint)
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username TEXT UNIQUE,
-            password TEXT,
-            role TEXT CHECK(role IN ('admin', 'user')),
-            stickers INTEGER DEFAULT 0,
-            is_approved BOOLEAN DEFAULT TRUE
-        )
-        """)
+    # Tạo bảng cho Image game
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS guess_image_game (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        image_path TEXT NOT NULL,
+        answer TEXT NOT NULL,
+        hint1 TEXT NOT NULL,
+        hint2 TEXT NOT NULL,
+        hint3 TEXT NOT NULL,
+        topic TEXT NOT NULL,
+        difficulty TEXT NOT NULL,
+        added_by INTEGER,
+        date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(added_by) REFERENCES users(id)
+    )
+    """)
 
-        # Bảng phần quà có thể đổi
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS rewards (
-            id SERIAL PRIMARY KEY,
-            name TEXT,
-            description TEXT,
-            sticker_cost INTEGER,
-            stock INTEGER
-        )
-        """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS game_scores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        score INTEGER NOT NULL,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,        
+        topic TEXT NOT NULL,
+        difficulty TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )    
+    """)
 
-        # Bảng lịch sử đổi quà
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS reward_history (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER,
-            reward_id INTEGER,
-            date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-
-        # Bảng yêu cầu đổi thưởng (Admin xử lý)
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS gift_requests (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER,
-            reward_id INTEGER,
-            status TEXT CHECK(status IN ('pending', 'approved', 'rejected')) DEFAULT 'pending',
-            request_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            response_time TIMESTAMP
-        )
-        """)
-        
-        # Tạo bảng lesson_topics trước vì các bảng khác phụ thuộc vào nó
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS lesson_topics (
-            id SERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            description TEXT,
-            thumbnail_url TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-
-        # Tạo bảng chapters sau lesson_topics
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS chapters (
-            id SERIAL PRIMARY KEY,
-            lesson_topic_id INTEGER NOT NULL,
-            title TEXT NOT NULL,
-            description TEXT,
-            order_num INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (lesson_topic_id) REFERENCES lesson_topics(id)
-        )
-        """)
-
-        # Cập nhật bảng lessons (phụ thuộc vào chapters và lesson_topics)
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS lessons (
-            id SERIAL PRIMARY KEY,
-            title TEXT NOT NULL,
-            description TEXT,
-            content TEXT,
-            content_type TEXT,
-            lesson_topic_id INTEGER,
-            chapter_id INTEGER,
-            level TEXT,
-            is_interactive BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (lesson_topic_id) REFERENCES lesson_topics(id),
-            FOREIGN KEY (chapter_id) REFERENCES chapters(id)
-        )
-        """)
-
-        # Thêm bảng interactive_content (phụ thuộc vào lessons)
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS interactive_content (
-            id SERIAL PRIMARY KEY,
-            lesson_id INTEGER NOT NULL,
-            content_type TEXT NOT NULL,
-            content_data TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (lesson_id) REFERENCES lessons(id)
-        )
-        """)
-
-        # Thêm bảng user_learning_progress (phụ thuộc vào users và lessons)
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS user_learning_progress (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER NOT NULL,
-            lesson_id INTEGER NOT NULL,
-            is_completed BOOLEAN DEFAULT FALSE,
-            last_accessed TIMESTAMP,
-            progress_percent INTEGER DEFAULT 0,
-            notes TEXT,
-            FOREIGN KEY (user_id) REFERENCES users(id),
-            FOREIGN KEY (lesson_id) REFERENCES lessons(id),
-            UNIQUE(user_id, lesson_id)
-        )
-        """)
-
-        # Thêm bảng Hangman words (phụ thuộc vào users)
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS hangman_words (
-            id SERIAL PRIMARY KEY,
-            word TEXT NOT NULL,
-            hint TEXT NOT NULL,
-            topic TEXT NOT NULL,
-            difficulty TEXT NOT NULL,
-            added_by INTEGER,
-            date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(added_by) REFERENCES users(id)
-        )
-        """)
-
-        # Thêm bảng lịch sử chơi Hangman
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS hangman_history (
-            id SERIAL PRIMARY KEY,
-            user_id INTEGER,
-            word_id INTEGER,
-            session_id TEXT,
-            result TEXT,
-            wrong_guesses INTEGER,
-            date_played TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(user_id) REFERENCES users(id),
-            FOREIGN KEY(word_id) REFERENCES hangman_words(id)
-        )
-        """)
-
-        # Thêm bảng Guess Image Game
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS guess_image_game (
-            id SERIAL PRIMARY KEY,
-            image_path TEXT NOT NULL,
-            answer TEXT NOT NULL,
-            hint1 TEXT NOT NULL,
-            hint2 TEXT NOT NULL,
-            hint3 TEXT NOT NULL,
-            topic TEXT NOT NULL,
-            difficulty TEXT NOT NULL,
-            added_by INTEGER,
-            date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(added_by) REFERENCES users(id)
-        )
-        """)
-
-        # Thêm dữ liệu mẫu nếu cần
-        cursor.execute("SELECT * FROM users WHERE username = 'admin'")
-        if not cursor.fetchone():
-            cursor.execute(
-                "INSERT INTO users (username, password, role) VALUES (%s, %s, %s)",
-                ("admin", "admin123", "admin")
-            )
-        
-        cursor.execute("SELECT * FROM users WHERE username = 'danvy'")
-        if not cursor.fetchone():
-            cursor.execute(
-                "INSERT INTO users (username, password, role) VALUES (%s, %s, %s)",
-                ("danvy", "123456", "user")
-            )
-
-        conn.commit()
-        print("Database khởi tạo thành công!")
-        
-    except Exception as e:
-        conn.rollback()
-        print(f"Lỗi khi khởi tạo database: {e}")
-    finally:
-        cursor.close()
-        conn.close()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS game_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        question_id INTEGER NOT NULL,
+        guessed_correctly BOOLEAN NOT NULL,
+        score_earned INTEGER NOT NULL,
+        hints_used INTEGER DEFAULT 0,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id),
+        FOREIGN KEY(question_id) REFERENCES guess_image_game(id)
+    )
+    """)    
+    
+    conn.commit()
 
 # Hàm đăng nhập
 def login(username, password):
