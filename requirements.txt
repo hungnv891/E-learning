@@ -5,4 +5,4 @@ gtts
 fpdf
 xhtml2pdf
 Pillow
-psycopg2-binary
+plotly
