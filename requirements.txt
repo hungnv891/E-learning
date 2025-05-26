@@ -6,3 +6,4 @@ fpdf
 xhtml2pdf
 Pillow
 plotly
+streamlit-autorefresh
