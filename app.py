@@ -640,14 +640,23 @@ def play_hangman():
         conn.close()
         return
 
-    # Topic and difficulty selection
-    col1, col2 = st.columns(2)
-    with col1:
-        topics = set([word[3] for word in get_hangman_words(conn)])
-        selected_topic = st.selectbox("Chọn chủ đề", ["Tất cả"] + sorted(list(topics)))
-    with col2:
-        difficulties = set([word[4] for word in get_hangman_words(conn)])
-        selected_difficulty = st.selectbox("Chọn độ khó", ["Tất cả"] + sorted(list(difficulties)))
+    # Lấy toàn bộ dữ liệu một lần để tránh gọi lại nhiều lần
+    words = get_hangman_words(conn)
+
+    # Tạo danh sách các chủ đề
+    topics = sorted(set([word[3] for word in words]))
+    selected_topic = st.selectbox("Chọn chủ đề", ["Tất cả"] + topics)
+
+    # Lọc danh sách độ khó dựa trên chủ đề đã chọn
+    if selected_topic == "Tất cả":
+        filtered_words = words
+    else:
+        filtered_words = [word for word in words if word[3] == selected_topic]
+
+    # Lấy độ khó từ danh sách đã lọc
+    difficulties = sorted(set([word[4] for word in filtered_words]))
+    selected_difficulty = st.selectbox("Chọn độ khó", ["Tất cả"] + difficulties)
+
 
     # Start game button
     if st.button("Bắt đầu chơi") and not st.session_state.hangman['game_started']:
@@ -1146,14 +1155,21 @@ def game_section():
 
             if screen == 'setup':
                 st.title("🧩 Crossword Puzzle")
+
+                # Lấy danh sách chủ đề
                 cursor = conn.cursor()
                 cursor.execute("SELECT DISTINCT topic FROM hangman_words")
                 topics = [row[0] for row in cursor.fetchall()]
-                selected_topic = st.selectbox("📚 Chọn chủ đề", topics, key="crossword_topic")
+                selected_topic = st.selectbox("📚 Chọn chủ đề", ["Tất cả"] + topics, key="crossword_topic")
 
-                cursor.execute("SELECT DISTINCT difficulty FROM hangman_words")
+                # Lọc độ khó dựa theo chủ đề đã chọn
+                if selected_topic == "Tất cả":
+                    cursor.execute("SELECT DISTINCT difficulty FROM hangman_words")
+                else:
+                    cursor.execute("SELECT DISTINCT difficulty FROM hangman_words WHERE topic = ?", (selected_topic,))
                 difficulties = [row[0] for row in cursor.fetchall()]
-                selected_difficulty = st.selectbox("🎯 Chọn độ khó", difficulties, key="crossword_difficulty")
+                selected_difficulty = st.selectbox("🎯 Chọn độ khó", ["Tất cả"] + difficulties, key="crossword_difficulty")
+
 
                 if st.button("🚀 Bắt đầu chơi", key="start_crossword"):
                     cursor.execute("""
@@ -1738,17 +1754,22 @@ def game_section():
 
             if screen == 'setup':
                 st.title("🔠 Matrix Word Game")
+
                 cursor = conn.cursor()
-                
+
                 # Chọn chủ đề
                 cursor.execute("SELECT DISTINCT topic FROM hangman_words")
                 topics = [row[0] for row in cursor.fetchall()]
-                selected_topic = st.selectbox("📚 Chọn chủ đề", topics, key="matrix_topic")
-                
-                # Chọn độ khó
-                cursor.execute("SELECT DISTINCT difficulty FROM hangman_words")
+                selected_topic = st.selectbox("📚 Chọn chủ đề", ["Tất cả"] + topics, key="matrix_topic")
+
+                # Chọn độ khó theo chủ đề đã chọn
+                if selected_topic == "Tất cả":
+                    cursor.execute("SELECT DISTINCT difficulty FROM hangman_words")
+                else:
+                    cursor.execute("SELECT DISTINCT difficulty FROM hangman_words WHERE topic = ?", (selected_topic,))
                 difficulties = [row[0] for row in cursor.fetchall()]
-                selected_difficulty = st.selectbox("🎯 Chọn độ khó", difficulties, key="matrix_difficulty")
+                selected_difficulty = st.selectbox("🎯 Chọn độ khó", ["Tất cả"] + difficulties, key="matrix_difficulty")
+
                 
                 # Chọn số lượng từ
                 word_count = st.slider("🔢 Số lượng từ (5-20)", 5, 30, 10, key="matrix_word_count")
@@ -2468,6 +2489,29 @@ conn = get_connection()
 init_db(conn)
 conn.close()
 
+REMEMBER_FILE = "remember_login.json"
+
+# Tự động đăng nhập nếu đã lưu thông tin đăng nhập
+if os.path.exists(REMEMBER_FILE) and 'user' not in st.session_state:
+    with open(REMEMBER_FILE, "r") as f:
+        saved = json.load(f)
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, username, role, stickers, is_approved 
+            FROM users 
+            WHERE username = ? AND password = ?
+        """, (saved["username"], saved["password"]))
+        user = cursor.fetchone()
+        conn.close()
+        if user and user[4]:
+            st.session_state.user = {
+                'id': user[0],
+                'username': user[1],
+                'role': user[2],
+                'stickers': user[3]
+            }
+
 # Màn hình đăng nhập/đăng ký
 if 'user' not in st.session_state:
     st.title("🔐 Đăng nhập/Đăng ký")
@@ -2477,7 +2521,8 @@ if 'user' not in st.session_state:
     with tab1:
         username = st.text_input("Tên đăng nhập")
         password = st.text_input("Mật khẩu", type="password")
-        
+        remember_me = st.checkbox("🔒 Duy trì đăng nhập")
+
         if st.button("Đăng nhập"):
             conn = get_connection()
             cursor = conn.cursor()
@@ -2490,13 +2535,16 @@ if 'user' not in st.session_state:
             conn.close()
             
             if user:
-                if user[4]:  # Check is_approved status
+                if user[4]:  # is_approved == True
                     st.session_state.user = {
                         'id': user[0],
                         'username': user[1],
                         'role': user[2],
                         'stickers': user[3]
                     }
+                    if remember_me:
+                        with open(REMEMBER_FILE, "w") as f:
+                            json.dump({"username": username, "password": password}, f)
                     st.rerun()
                 else:
                     st.error("Tài khoản của bạn chưa được phê duyệt. Vui lòng chờ admin xét duyệt.")
@@ -2517,7 +2565,6 @@ if 'user' not in st.session_state:
                 conn = get_connection()
                 cursor = conn.cursor()
                 try:
-                    # Default is_approved = False for new users
                     cursor.execute("""
                         INSERT INTO users (username, password, role, stickers, is_approved)
                         VALUES (?, ?, 'user', 0, 0)
@@ -5579,5 +5626,10 @@ if option == "📚 Bài học":
             
 # Đăng xuất
 if st.sidebar.button("🚪 Đăng xuất"):
+    # Xóa file lưu đăng nhập nếu có
+    if os.path.exists(REMEMBER_FILE):
+        os.remove(REMEMBER_FILE)
+        
+    # Xóa session
     st.session_state.clear()
     st.rerun()
