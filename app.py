@@ -4716,11 +4716,11 @@ elif option == "📝 Làm bài thi trắc nghiệm":
             
             time_placeholder.markdown(
                 f"""
-                <div style="display: flex; justify-content: space-between; margin-bottom: 20px;">
-                    <div style="background: #f0f2f6; padding: 10px 15px; border-radius: 10px;">
+                <div style="max-width: 150px; margin-left: 0px; margin-bottom: 20px;">
+                    <div style="background: #f0f2f6; padding: 10px 15px; border-radius: 10px; margin-bottom: 10px; text-align: center;">
                         📝 Đã làm: {answered}/{len(st.session_state['questions'])}
                     </div>
-                    <div style="background: #ff4b4b; color: white; padding: 10px 15px; border-radius: 10px;">
+                    <div style="background: #ff4b4b; color: white; padding: 10px 15px; border-radius: 10px; text-align: center;">
                         ⏳ Còn lại: {minutes:02d}:{seconds:02d}
                     </div>
                 </div>
