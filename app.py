@@ -85,7 +85,7 @@ local_css()
 # Kết nối PostgreSQL trên Railway
 def get_connection():
     try:
-        db_url = os.getenv("postgresql://postgres:FmiIrpuNIcjzytEuVVWhZYIhKnpvRlGh@postgres.railway.internal:5432/railway")  # Railway chỉ dùng biến môi trường
+        db_url = os.getenv("postgres://postgres:FmiIrpuNIcjzytEuVVWhZYIhKnpvRlGh@postgres.railway.internal:5432/railway")  # Railway chỉ dùng biến môi trường
 
         if not db_url:
             st.error("Không tìm thấy DATABASE_URL trong biến môi trường")
