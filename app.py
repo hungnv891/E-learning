@@ -85,11 +85,23 @@ local_css()
 # Kết nối PostgreSQL trên Railway
 def get_connection():
     try:
-        # Lấy connection string từ biến môi trường (Railway tự động thêm DATABASE_URL)
-        conn = psycopg2.connect(st.secrets["postgresql://postgres:FmiIrpuNIcjzytEuVVWhZYIhKnpvRlGh@postgres.railway.internal:5432/railway"])
+        # Ưu tiên lấy từ biến môi trường trước
+        db_url = os.getenv("DATABASE_URL")
+        
+        # Nếu không có thì thử lấy từ secrets
+        if not db_url and hasattr(st, 'secrets'):
+            db_url = st.secrets.get("DATABASE_URL")
+        
+        if not db_url:
+            st.error("Không tìm thấy DATABASE_URL trong biến môi trường hoặc secrets")
+            return None
+            
+        # Kết nối với SSL
+        conn = psycopg2.connect(db_url, sslmode="require")
         return conn
+        
     except Exception as e:
-        st.error(f"Không thể kết nối database: {e}")
+        st.error(f"Lỗi kết nối database: {e}")
         return None
 
 # Khởi tạo database - ĐÃ CHUYỂN SANG CÚ PHÁP POSTGRESQL
