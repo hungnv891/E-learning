@@ -80,18 +80,24 @@ def local_css():
 
 local_css()
 
-# Kết nối SQLite
+# Kết nối PostgreSQL trên Railway
 def get_connection():
-    return sqlite3.connect("questions.db")
+    try:
+        # Lấy connection string từ biến môi trường (Railway tự động thêm DATABASE_URL)
+        conn = psycopg2.connect(st.secrets["DATABASE_URL"])
+        return conn
+    except Exception as e:
+        st.error(f"Không thể kết nối database: {e}")
+        return None
 
-# Khởi tạo database
+# Khởi tạo database - ĐÃ CHUYỂN SANG CÚ PHÁP POSTGRESQL
 def init_db(conn):
     cursor = conn.cursor()
     
     # Tạo bảng câu hỏi
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS questions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         topic TEXT,
         level TEXT,
         exam_code TEXT,
@@ -109,7 +115,7 @@ def init_db(conn):
     # Tạo bảng kết quả thi
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS results (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         user_id INTEGER,
         topic TEXT,
         level TEXT,
@@ -125,19 +131,19 @@ def init_db(conn):
     # Tạo bảng người dùng
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         username TEXT UNIQUE,
         password TEXT,
         role TEXT,  
         stickers INTEGER DEFAULT 0,
-        is_approved BOOLEAN DEFAULT 0
+        is_approved BOOLEAN DEFAULT FALSE
     )
     """)
     
     # Tạo bảng phần quà
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS rewards (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         name TEXT,
         description TEXT,
         sticker_cost INTEGER,
@@ -148,71 +154,146 @@ def init_db(conn):
     # Tạo bảng lịch sử đổi quà
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS reward_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         user_id INTEGER,
         reward_id INTEGER,
         date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
     
-    # Thêm admin va user mặc định nếu chưa có
+    # Bảng yêu cầu đổi thưởng
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS gift_requests (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER,
+        reward_id INTEGER,
+        status TEXT CHECK(status IN ('pending', 'approved', 'rejected')) DEFAULT 'pending',
+        request_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        response_time TIMESTAMP
+    )
+    """)
+    
+    # Bảng lessons
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS lessons (
+        id SERIAL PRIMARY KEY,
+        title TEXT NOT NULL,
+        description TEXT,
+        content TEXT,
+        content_type TEXT,
+        lesson_topic_id INTEGER,  
+        chapter_id INTEGER,  
+        level TEXT,
+        is_interactive BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # Bảng lesson_topics
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS lesson_topics (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        thumbnail_url TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # Bảng chapters
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS chapters (
+        id SERIAL PRIMARY KEY,
+        lesson_topic_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT,
+        order_num INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # Bảng interactive_content
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS interactive_content (
+        id SERIAL PRIMARY KEY,
+        lesson_id INTEGER NOT NULL,
+        content_type TEXT NOT NULL,  
+        content_data TEXT NOT NULL,  
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
+    # Bảng user_learning_progress
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS user_learning_progress (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        lesson_id INTEGER NOT NULL,
+        is_completed BOOLEAN DEFAULT FALSE,
+        last_accessed TIMESTAMP,
+        progress_percent INTEGER DEFAULT 0,
+        notes TEXT,
+        UNIQUE(user_id, lesson_id)
+    )
+    """)
+    
+    # Thêm admin và user mặc định
     cursor.execute("SELECT * FROM users WHERE username = 'admin'")
     if not cursor.fetchone():
-        cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
-                      ("admin", "admin123", "admin"))
+        cursor.execute("""
+        INSERT INTO users (username, password, role) 
+        VALUES (%s, %s, %s)
+        """, ("admin", "admin123", "admin"))
+    
     cursor.execute("SELECT * FROM users WHERE username = 'danvy'")
     if not cursor.fetchone():
-        cursor.execute(
-            "INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
-            ("danvy", "123456", "user")
-        )                  
+        cursor.execute("""
+        INSERT INTO users (username, password, role) 
+        VALUES (%s, %s, %s)
+        """, ("danvy", "123456", "user"))
                       
-                      
-    # Tạo bảng cho Hangman
+    # Bảng hangman_words
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS hangman_words (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         word TEXT NOT NULL,
         hint TEXT NOT NULL,
         topic TEXT NOT NULL,
         difficulty TEXT NOT NULL,
         added_by INTEGER,
-        date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(added_by) REFERENCES users(id)
+        date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
     
-    # Tạo bảng lịch sử chơi Hangman
+    # Bảng hangman_history
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS hangman_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         user_id INTEGER,
         word_id INTEGER,
         session_id TEXT,
         result TEXT,  
         wrong_guesses INTEGER,
-        date_played TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(user_id) REFERENCES users(id),
-        FOREIGN KEY(word_id) REFERENCES hangman_words(id)
+        date_played TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """) 
 
-    # Tạo bảng lưu chuỗi thắng dài nhất của mỗi phiên
+    # Bảng hangman_session_streaks
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS hangman_session_streaks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         user_id INTEGER,
         session_id TEXT,
         longest_win_streak INTEGER,
-        date_played TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(user_id) REFERENCES users(id)
+        date_played TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
-    # Tạo bảng cho Image game
+    # Bảng guess_image_game
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS guess_image_game (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         image_path TEXT NOT NULL,
         answer TEXT NOT NULL,
         hint1 TEXT NOT NULL,
@@ -221,67 +302,91 @@ def init_db(conn):
         topic TEXT NOT NULL,
         difficulty TEXT NOT NULL,
         added_by INTEGER,
-        date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(added_by) REFERENCES users(id)
+        date_added TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS game_scores (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL,
         score INTEGER NOT NULL,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,        
         topic TEXT NOT NULL,
-        difficulty TEXT NOT NULL,
-        FOREIGN KEY(user_id) REFERENCES users(id)
+        difficulty TEXT NOT NULL
     )    
     """)
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS game_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL,
         question_id INTEGER NOT NULL,
         guessed_correctly BOOLEAN NOT NULL,
         score_earned INTEGER NOT NULL,
         hints_used INTEGER DEFAULT 0,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(user_id) REFERENCES users(id),
-        FOREIGN KEY(question_id) REFERENCES guess_image_game(id)
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """)    
     
     conn.commit()
 
-# Hàm đăng nhập
+# Hàm đăng nhập - ĐÃ CHUYỂN SANG PARAM STYLE CỦA POSTGRESQL
 def login(username, password):
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, username, role, stickers FROM users WHERE username = ? AND password = ?", 
-                  (username, password))
-    user = cursor.fetchone()
-    conn.close()
-    return user
-
-# Hàm đăng ký
-def register(username, password):
-    conn = get_connection()
+    if conn is None:
+        return None
+        
     cursor = conn.cursor()
     try:
-        cursor.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
-                      (username, password, "user"))
+        cursor.execute("""
+            SELECT id, username, role, stickers 
+            FROM users 
+            WHERE username = %s AND password = %s
+        """, (username, password))
+        user = cursor.fetchone()
+        return user
+    except Exception as e:
+        st.error(f"Lỗi đăng nhập: {e}")
+        return None
+    finally:
+        if conn:
+            conn.close()
+
+# Hàm đăng ký - ĐÃ CHUYỂN SANG PARAM STYLE CỦA POSTGRESQL
+def register(username, password):
+    conn = get_connection()
+    if conn is None:
+        return False
+        
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            INSERT INTO users (username, password, role) 
+            VALUES (%s, %s, %s)
+        """, (username, password, "user"))
         conn.commit()
         return True
-    except sqlite3.IntegrityError:
+    except psycopg2.IntegrityError:
+        return False
+    except Exception as e:
+        st.error(f"Lỗi đăng ký: {e}")
         return False
     finally:
+        if conn:
+            conn.close()
+
+# Khởi tạo kết nối và bảng khi chạy app
+if __name__ == "__main__":
+    conn = get_connection()
+    if conn:
+        init_db(conn)
         conn.close()
 
 # Hàm thêm sticker cho user
 def add_stickers(conn, user_id, count):
     cursor = conn.cursor()
-    cursor.execute("UPDATE users SET stickers = stickers + ? WHERE id = ?", (count, user_id))
+    cursor.execute("UPDATE users SET stickers = stickers + %s WHERE id = %s", (count, user_id))
     conn.commit()
 
 # Hàm lấy danh sách phần quà
@@ -295,7 +400,7 @@ def redeem_reward(conn, user_id, reward_id, reduce_sticker=True):
     cursor = conn.cursor()
     
     # Kiểm tra số sticker và stock
-    cursor.execute("SELECT sticker_cost, stock FROM rewards WHERE id = ?", (reward_id,))
+    cursor.execute("SELECT sticker_cost, stock FROM rewards WHERE id = %s", (reward_id,))
     reward = cursor.fetchone()
     if not reward:
         return False, "Phần quà không tồn tại"
@@ -305,15 +410,15 @@ def redeem_reward(conn, user_id, reward_id, reduce_sticker=True):
         return False, "Hết hàng"
     
     if reduce_sticker:
-        cursor.execute("SELECT stickers FROM users WHERE id = ?", (user_id,))
+        cursor.execute("SELECT stickers FROM users WHERE id = %s", (user_id,))
         user_stickers = cursor.fetchone()[0]
         if user_stickers < cost:
             return False, "Không đủ sticker"
-        cursor.execute("UPDATE users SET stickers = stickers - ? WHERE id = ?", (cost, user_id))
+        cursor.execute("UPDATE users SET stickers = stickers - %s WHERE id = %s", (cost, user_id))
     
     # Cập nhật kho và lưu lịch sử
-    cursor.execute("UPDATE rewards SET stock = stock - 1 WHERE id = ?", (reward_id,))
-    cursor.execute("INSERT INTO reward_history (user_id, reward_id) VALUES (?, ?)", (user_id, reward_id))
+    cursor.execute("UPDATE rewards SET stock = stock - 1 WHERE id = %s", (reward_id,))
+    cursor.execute("INSERT INTO reward_history (user_id, reward_id) VALUES (%s, %s)", (user_id, reward_id))
     conn.commit()
     
     return True, "Đổi quà thành công"
@@ -323,14 +428,14 @@ def add_reward(conn, name, description, sticker_cost, stock):
     cursor = conn.cursor()
     cursor.execute("""
     INSERT INTO rewards (name, description, sticker_cost, stock)
-    VALUES (?, ?, ?, ?)
+    VALUES (%s, %s, %s, %s)
     """, (name, description, sticker_cost, stock))
     conn.commit()
 
 # Hàm xóa phần quà (cho admin)
 def delete_reward(conn, reward_id):
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM rewards WHERE id = ?", (reward_id,))
+    cursor.execute("DELETE FROM rewards WHERE id = %s", (reward_id,))
     conn.commit()
 
 # Hàm lấy lịch sử đổi quà của user
@@ -340,7 +445,7 @@ def get_user_reward_history(conn, user_id):
     SELECT rh.date, r.name, r.description 
     FROM reward_history rh
     JOIN rewards r ON rh.reward_id = r.id
-    WHERE rh.user_id = ?
+    WHERE rh.user_id = %s
     ORDER BY rh.date DESC
     """, (user_id,))
     return cursor.fetchall()
@@ -354,14 +459,14 @@ def get_all_users(conn):
 # Lấy số sticker hiện tại của người dùng
 def get_stickers(conn, user_id):
     cursor = conn.cursor()
-    cursor.execute("SELECT stickers FROM users WHERE id = ?", (user_id,))
+    cursor.execute("SELECT stickers FROM users WHERE id = %s", (user_id,))
     result = cursor.fetchone()
     return result[0] if result else 0
 
 # Cập nhật số sticker mới cho người dùng
 def update_stickers(conn, user_id, new_sticker_count):
     cursor = conn.cursor()
-    cursor.execute("UPDATE users SET stickers = ? WHERE id = ?", (new_sticker_count, user_id))
+    cursor.execute("UPDATE users SET stickers = %s WHERE id = %s", (new_sticker_count, user_id))
     conn.commit()    
     
 #################Game##################
@@ -371,7 +476,7 @@ def add_hangman_word(conn, word, hint, topic, difficulty, added_by):
     cursor = conn.cursor()
     cursor.execute("""
     INSERT INTO hangman_words (word, hint, topic, difficulty, added_by)
-    VALUES (?, ?, ?, ?, ?)
+    VALUES (%s, %s, %s, %s, %s)
     """, (word.upper(), hint, topic, difficulty, added_by))
     conn.commit()
 
@@ -384,10 +489,10 @@ def get_hangman_words(conn, topic=None, difficulty=None):
         query += " WHERE"
         conditions = []
         if topic:
-            conditions.append(" topic = ?")
+            conditions.append(" topic = %s")
             params.append(topic)
         if difficulty:
-            conditions.append(" difficulty = ?")
+            conditions.append(" difficulty = %s")
             params.append(difficulty)
         query += " AND".join(conditions)
     
@@ -410,7 +515,7 @@ def save_hangman_result(conn, user_id, word_id, session_id, result, wrong_guesse
     cursor = conn.cursor()
     cursor.execute("""
     INSERT INTO hangman_history (user_id, word_id, session_id, result, wrong_guesses)
-    VALUES (?, ?, ?, ?, ?)
+    VALUES (%s, %s, %s, %s, %s)
     """, (user_id, word_id, session_id, result, wrong_guesses))
     conn.commit()
     
@@ -419,7 +524,7 @@ def save_session_streak(conn, user_id, session_id, longest_win_streak):
     cursor = conn.cursor()
     cursor.execute("""
     INSERT INTO hangman_session_streaks (user_id, session_id, longest_win_streak)
-    VALUES (?, ?, ?)
+    VALUES (%s, %s, %s)
     """, (user_id, session_id, longest_win_streak))
     conn.commit()    
 
@@ -528,7 +633,7 @@ def play_hangman():
                             #     if overwrite_option == "Ghi đè từ trùng":
                             #         cursor = conn.cursor()
                             #         for word in df[df['is_duplicate']]['word']:
-                            #             cursor.execute("DELETE FROM hangman_words WHERE word = ?", (word,))
+                            #             cursor.execute("DELETE FROM hangman_words WHERE word = %s", (word,))
                             #         conn.commit()
                             #         st.info("Đã xóa các từ trùng lặp trước khi thêm mới")
 
@@ -1166,7 +1271,7 @@ def game_section():
                 if selected_topic == "Tất cả":
                     cursor.execute("SELECT DISTINCT difficulty FROM hangman_words")
                 else:
-                    cursor.execute("SELECT DISTINCT difficulty FROM hangman_words WHERE topic = ?", (selected_topic,))
+                    cursor.execute("SELECT DISTINCT difficulty FROM hangman_words WHERE topic = %s", (selected_topic,))
                 difficulties = [row[0] for row in cursor.fetchall()]
                 selected_difficulty = st.selectbox("🎯 Chọn độ khó", ["Tất cả"] + difficulties, key="crossword_difficulty")
 
@@ -1174,7 +1279,7 @@ def game_section():
                 if st.button("🚀 Bắt đầu chơi", key="start_crossword"):
                     cursor.execute("""
                         SELECT word, hint FROM hangman_words
-                        WHERE topic = ? AND difficulty = ?
+                        WHERE topic = %s AND difficulty = %s
                         ORDER BY RANDOM() LIMIT 10
                     """, (selected_topic, selected_difficulty))
                     words_data = [{'word': row[0], 'hint': row[1]} for row in cursor.fetchall()]
@@ -1513,7 +1618,7 @@ def game_section():
                 cursor.execute("""
                     INSERT INTO crossword_results 
                     (user_id, topic, difficulty, total_words, correct_words, time_seconds)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                 """, (
                     st.session_state.user['id'],
                     crossword['topic'],
@@ -1766,7 +1871,7 @@ def game_section():
                 if selected_topic == "Tất cả":
                     cursor.execute("SELECT DISTINCT difficulty FROM hangman_words")
                 else:
-                    cursor.execute("SELECT DISTINCT difficulty FROM hangman_words WHERE topic = ?", (selected_topic,))
+                    cursor.execute("SELECT DISTINCT difficulty FROM hangman_words WHERE topic = %s", (selected_topic,))
                 difficulties = [row[0] for row in cursor.fetchall()]
                 selected_difficulty = st.selectbox("🎯 Chọn độ khó", ["Tất cả"] + difficulties, key="matrix_difficulty")
 
@@ -1780,8 +1885,8 @@ def game_section():
                 if st.button("🚀 Tạo ô chữ", key="generate_matrix"):
                     cursor.execute("""
                         SELECT word, hint FROM hangman_words
-                        WHERE topic = ? AND difficulty = ?
-                        ORDER BY RANDOM() LIMIT ?
+                        WHERE topic = %s AND difficulty = %s
+                        ORDER BY RANDOM() LIMIT %s
                     """, (selected_topic, selected_difficulty, word_count + 3))  # Lấy thêm 3 từ phòng trường hợp không đặt được
                     
                     words_data = [{'word': row[0], 'hint': row[1]} for row in cursor.fetchall()]
@@ -1941,22 +2046,22 @@ def game_section():
                 if topic and difficulty:
                     cursor.execute("""
                         SELECT * FROM guess_image_game
-                        WHERE topic = ? AND difficulty = ?
+                        WHERE topic = %s AND difficulty = %s
                         ORDER BY RANDOM()
-                        LIMIT ?
+                        LIMIT %s
                     """, (topic, difficulty, limit))
                 elif topic:
                     cursor.execute("""
                         SELECT * FROM guess_image_game
-                        WHERE topic = ?
+                        WHERE topic = %s
                         ORDER BY RANDOM()
-                        LIMIT ?
+                        LIMIT %s
                     """, (topic, limit))
                 else:
                     cursor.execute("""
                         SELECT * FROM guess_image_game 
                         ORDER BY RANDOM()
-                        LIMIT ?
+                        LIMIT %s
                     """, (limit,))
                 return cursor.fetchall()
 
@@ -1999,7 +2104,7 @@ def game_section():
                     cursor.execute("""
                         INSERT INTO game_history 
                         (user_id, question_id, guessed_correctly, score_earned, hints_used)
-                        VALUES (?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s)
                     """, (st.session_state.user['id'], 
                          game['questions'][game['current_question']][0], 
                          True, score_earned, game['hints_shown']))
@@ -2034,7 +2139,7 @@ def game_section():
                     cursor = conn.cursor()
                     cursor.execute("""
                         INSERT INTO game_scores (user_id, score, topic, difficulty)
-                        VALUES (?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s)
                     """, (st.session_state.user['id'], game['score'], game['topic'], game['difficulty']))
                     conn.commit()
                     
@@ -2137,7 +2242,7 @@ def game_section():
                                         cursor.execute("""
                                             INSERT INTO guess_image_game 
                                             (image_path, answer, hint1, hint2, hint3, topic, difficulty, added_by)
-                                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                                         """, (image_url, answer, hint1, hint2, hint3, topic, difficulty, st.session_state.user['id']))
                                         conn.commit()
                                         st.success("Đã thêm câu hỏi mới!")
@@ -2225,7 +2330,7 @@ def game_section():
                                                     cursor.execute("""
                                                         INSERT INTO guess_image_game 
                                                         (image_path, answer, hint1, hint2, hint3, topic, difficulty, added_by)
-                                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                                                     """, (
                                                         row.get('image_path', ''),
                                                         row['answer'],
@@ -2388,7 +2493,7 @@ def game_section():
                     SELECT u.username, g.score, g.topic, g.difficulty
                     FROM game_scores g
                     JOIN users u ON g.user_id = u.id
-                    WHERE g.topic = ? AND g.difficulty = ?
+                    WHERE g.topic = %s AND g.difficulty = %s
                     ORDER BY g.score DESC
                     LIMIT 10
                 """, (game['topic'], game['difficulty']))
@@ -2406,7 +2511,7 @@ def game_section():
                     SELECT g.answer, h.guessed_correctly, h.score_earned, h.hints_used, h.timestamp
                     FROM game_history h
                     JOIN guess_image_game g ON h.question_id = g.id
-                    WHERE h.user_id = ?
+                    WHERE h.user_id = %s
                     ORDER BY h.timestamp DESC
                     LIMIT 10
                 """, (st.session_state.user['id'],))
@@ -2500,7 +2605,7 @@ if os.path.exists(REMEMBER_FILE) and 'user' not in st.session_state:
         cursor.execute("""
             SELECT id, username, role, stickers, is_approved 
             FROM users 
-            WHERE username = ? AND password = ?
+            WHERE username = %s AND password = %s
         """, (saved["username"], saved["password"]))
         user = cursor.fetchone()
         conn.close()
@@ -2529,7 +2634,7 @@ if 'user' not in st.session_state:
             cursor.execute("""
                 SELECT id, username, role, stickers, is_approved 
                 FROM users 
-                WHERE username = ? AND password = ?
+                WHERE username = %s AND password = %s
             """, (username, password))
             user = cursor.fetchone()
             conn.close()
@@ -2567,7 +2672,7 @@ if 'user' not in st.session_state:
                 try:
                     cursor.execute("""
                         INSERT INTO users (username, password, role, stickers, is_approved)
-                        VALUES (?, ?, 'user', 0, 0)
+                        VALUES (%s, %s, 'user', 0, 0)
                     """, (new_username, new_password))
                     conn.commit()
                     st.success("Đăng ký thành công! Tài khoản của bạn đang chờ phê duyệt từ admin.")
@@ -2609,12 +2714,12 @@ def get_topics(conn):
 
 def get_levels_by_topic(conn, topic):
     cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT level FROM questions WHERE topic = ?", (topic,))
+    cursor.execute("SELECT DISTINCT level FROM questions WHERE topic = %s", (topic,))
     return [row[0] for row in cursor.fetchall()]
 
 def get_exam_codes_by_topic_level(conn, topic, level):
     cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT exam_code FROM questions WHERE topic = ? AND level = ? AND exam_code IS NOT NULL", (topic, level))
+    cursor.execute("SELECT DISTINCT exam_code FROM questions WHERE topic = %s AND level = %s AND exam_code IS NOT NULL", (topic, level))
     return [row[0] for row in cursor.fetchall()]
 
 def get_questions(conn, topic, level, exam_code, limit):
@@ -2624,18 +2729,18 @@ def get_questions(conn, topic, level, exam_code, limit):
             SELECT question, answer_a, answer_b, answer_c, answer_d, answer_e,
                    correct_answer, explanation, topic, level, exam_code
             FROM questions 
-            WHERE topic = ? AND level = ? AND exam_code = ?
+            WHERE topic = %s AND level = %s AND exam_code = %s
             ORDER BY RANDOM()
-            LIMIT ?
+            LIMIT %s
         """, (topic, level, exam_code, limit))
     else:
         cursor.execute("""
             SELECT question, answer_a, answer_b, answer_c, answer_d, answer_e,
                    correct_answer, explanation, topic, level, exam_code
             FROM questions 
-            WHERE topic = ? AND level = ?
+            WHERE topic = %s AND level = %s
             ORDER BY RANDOM()
-            LIMIT ?
+            LIMIT %s
         """, (topic, level, limit))
     return cursor.fetchall()
 
@@ -2647,7 +2752,7 @@ def save_results(conn, user_id, topic, level, exam_code, num_questions, correct_
     cursor.execute("""
     INSERT INTO results (
         user_id, topic, level, exam_code, num_questions, correct_answers, duration, rewarded
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+    ) VALUES (%s, %s, %s, %s, %s, %s, %s, 0)
     """, (user_id, topic, level, exam_code, num_questions, correct_answers, duration))
     
     conn.commit()
@@ -2657,7 +2762,7 @@ def get_last_10_results(conn, user_id):
     cursor = conn.cursor()
     cursor.execute("""
     SELECT * FROM results
-    WHERE user_id = ?
+    WHERE user_id = %s
     ORDER BY date DESC
     LIMIT 10
     """, (user_id,))
@@ -2674,7 +2779,7 @@ def add_questions_from_csv(conn, csv_file):
     for _, row in df.iterrows():
         cursor.execute("""
         INSERT INTO questions (topic, level, exam_code, question, answer_a, answer_b, answer_c, answer_d, answer_e, correct_answer, explanation)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             row['topic'], row['level'], row['exam_code'], row['question'], 
             row['answer_a'], row['answer_b'], row['answer_c'],
@@ -2730,7 +2835,7 @@ if option == "📚 Quản lý câu hỏi" and st.session_state.user['role'] == '
                     question, answer_a, answer_b, answer_c, answer_d, answer_e,
                     correct_answer, explanation, topic, level, exam_code
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 question, answer_a, answer_b, answer_c, answer_d, answer_e if answer_e else None,
                 correct_answer, explanation, selected_topic, selected_level, exam_code if exam_code else None
@@ -2756,7 +2861,7 @@ if option == "📚 Quản lý câu hỏi" and st.session_state.user['role'] == '
         # Truy vấn chi tiết câu hỏi theo đúng thứ tự dữ liệu mẫu
         cursor.execute("""
             SELECT question, answer_a, answer_b, answer_c, answer_d, answer_e, correct_answer, explanation, topic, level, exam_code
-            FROM questions WHERE id = ?
+            FROM questions WHERE id = %s
         """, (selected_question_id,))
         q = cursor.fetchone()
 
@@ -2800,10 +2905,10 @@ if option == "📚 Quản lý câu hỏi" and st.session_state.user['role'] == '
         if st.button("💾 Cập nhật câu hỏi"):
             cursor.execute("""
                 UPDATE questions 
-                SET topic = ?, level = ?, exam_code = ?, question = ?, 
-                    answer_a = ?, answer_b = ?, answer_c = ?, answer_d = ?, answer_e = ?, 
-                    correct_answer = ?, explanation = ?
-                WHERE id = ?
+                SET topic = %s, level = %s, exam_code = %s, question = %s, 
+                    answer_a = %s, answer_b = %s, answer_c = %s, answer_d = %s, answer_e = %s, 
+                    correct_answer = %s, explanation = %s
+                WHERE id = %s
             """, (
                 selected_topic, selected_level, exam_code if exam_code else None,
                 question, answer_a, answer_b, answer_c, answer_d,
@@ -2820,7 +2925,7 @@ if option == "📚 Quản lý câu hỏi" and st.session_state.user['role'] == '
         question_id = st.number_input("ID câu hỏi cần xóa", min_value=1)
         if st.button("🗑️ Xóa câu hỏi"):
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM questions WHERE id = ?", (question_id,))
+            cursor.execute("DELETE FROM questions WHERE id = %s", (question_id,))
             conn.commit()
             st.success("✅ Câu hỏi đã được xóa!")
 
@@ -3070,7 +3175,7 @@ elif option == "👥 Quản lý người dùng" and st.session_state.user['role'
                     cursor = conn.cursor()
                     cursor.execute("""
                         INSERT INTO users (username, password, role, is_approved) 
-                        VALUES (?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s)
                     """, (new_username, new_password, role, 1 if auto_approve else 0))
                     conn.commit()
                     st.success(f"Thêm người dùng thành công! {'(Đã tự động phê duyệt)' if auto_approve else '(Chờ phê duyệt)'}")
@@ -3080,7 +3185,7 @@ elif option == "👥 Quản lý người dùng" and st.session_state.user['role'
     with tab3:  # Xóa người dùng
         st.write("### Xóa người dùng")
         cursor = conn.cursor()
-        cursor.execute("SELECT id, username FROM users WHERE id != ?", (st.session_state.user['id'],))
+        cursor.execute("SELECT id, username FROM users WHERE id != %s", (st.session_state.user['id'],))
         users = cursor.fetchall()
         
         if users:
@@ -3089,7 +3194,7 @@ elif option == "👥 Quản lý người dùng" and st.session_state.user['role'
             
             if st.button("Xóa người dùng", key="delete_user_button"):
                 user_id = user_options[selected_user]
-                cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+                cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
                 conn.commit()
                 st.success(f"Đã xóa người dùng {selected_user}")
         else:
@@ -3108,13 +3213,13 @@ elif option == "👥 Quản lý người dùng" and st.session_state.user['role'
                     st.write(f"👤 {user[1]} (Vai trò: {user[2]})")
                 with col2:
                     if st.button("Duyệt", key=f"approve_{user[0]}"):
-                        cursor.execute("UPDATE users SET is_approved = 1 WHERE id = ?", (user[0],))
+                        cursor.execute("UPDATE users SET is_approved = 1 WHERE id = %s", (user[0],))
                         conn.commit()
                         st.success(f"Đã duyệt tài khoản {user[1]}")
                         st.rerun()
                 with col3:
                     if st.button("Từ chối", key=f"reject_{user[0]}"):
-                        cursor.execute("DELETE FROM users WHERE id = ?", (user[0],))
+                        cursor.execute("DELETE FROM users WHERE id = %s", (user[0],))
                         conn.commit()
                         st.success(f"Đã từ chối tài khoản {user[1]}")
                         st.rerun()
@@ -3138,7 +3243,7 @@ elif option == "👥 Quản lý người dùng" and st.session_state.user['role'
         new_stickers = st.number_input("Nhập số sticker mới", min_value=0, value=current_stickers, step=1)
 
         if st.button("Cập nhật sticker"):
-            cursor.execute("UPDATE users SET stickers = ? WHERE id = ?", (new_stickers, user_id))
+            cursor.execute("UPDATE users SET stickers = %s WHERE id = %s", (new_stickers, user_id))
             conn.commit()
             st.success(f"Đã cập nhật sticker cho {selected_user} thành {new_stickers}")            
     
@@ -3180,7 +3285,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                         try:
                             cursor = conn.cursor()
                             cursor.execute(
-                                "INSERT INTO lesson_topics (name, description, thumbnail_url) VALUES (?, ?, ?)",
+                                "INSERT INTO lesson_topics (name, description, thumbnail_url) VALUES (%s, %s, %s)",
                                 (name, description, thumbnail_url if thumbnail_url else None)
                             )
                             conn.commit()
@@ -3203,7 +3308,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                                 st.image(lesson_topic[3], width=150)
                         with col2:
                             st.write(f"**Mô tả:** {lesson_topic[2] or 'Không có mô tả'}")
-                            st.write(f"**Số chương:** {conn.execute('SELECT COUNT(*) FROM chapters WHERE lesson_topic_id = ?', (lesson_topic[0],)).fetchone()[0]}")
+                            st.write(f"**Số chương:** {conn.execute('SELECT COUNT(*) FROM chapters WHERE lesson_topic_id = %s', (lesson_topic[0],)).fetchone()[0]}")
                             st.write(f"**Ngày tạo:** {lesson_topic[4]}")
         
         with tab3:
@@ -3220,7 +3325,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                 
                 if selected_lesson_topic:
                     lesson_topic_id = int(selected_lesson_topic.split(" - ")[0])
-                    lesson_topic = conn.execute("SELECT * FROM lesson_topics WHERE id = ?", (lesson_topic_id,)).fetchone()
+                    lesson_topic = conn.execute("SELECT * FROM lesson_topics WHERE id = %s", (lesson_topic_id,)).fetchone()
                     
                     with st.form("edit_lesson_topic_form"):
                         new_name = st.text_input("Tên chủ đề", value=lesson_topic[1])
@@ -3232,7 +3337,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                             if st.form_submit_button("Cập nhật"):
                                 try:
                                     conn.execute(
-                                        "UPDATE lesson_topics SET name = ?, description = ?, thumbnail_url = ? WHERE id = ?",
+                                        "UPDATE lesson_topics SET name = %s, description = %s, thumbnail_url = %s WHERE id = %s",
                                         (new_name, new_description, new_thumbnail if new_thumbnail else None, lesson_topic_id)
                                     )
                                     conn.commit()
@@ -3244,14 +3349,14 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                                 try:
                                     # Kiểm tra xem có chương nào thuộc chủ đề này không
                                     chapter_count = conn.execute(
-                                        "SELECT COUNT(*) FROM chapters WHERE lesson_topic_id = ?", 
+                                        "SELECT COUNT(*) FROM chapters WHERE lesson_topic_id = %s", 
                                         (lesson_topic_id,)
                                     ).fetchone()[0]
                                     
                                     if chapter_count > 0:
                                         st.error("Không thể xóa chủ đề đã có chương học! Hãy xóa các chương trước.")
                                     else:
-                                        conn.execute("DELETE FROM lesson_topics WHERE id = ?", (lesson_topic_id,))
+                                        conn.execute("DELETE FROM lesson_topics WHERE id = %s", (lesson_topic_id,))
                                         conn.commit()
                                         st.success("✅ Chủ đề đã được xóa!")
                                         st.rerun()
@@ -3287,7 +3392,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                         else:
                             try:
                                 conn.execute(
-                                    "INSERT INTO chapters (lesson_topic_id, title, description, order_num) VALUES (?, ?, ?, ?)",
+                                    "INSERT INTO chapters (lesson_topic_id, title, description, order_num) VALUES (%s, %s, %s, %s)",
                                     (lesson_topic_id, title, description, order_num)
                                 )
                                 conn.commit()
@@ -3297,7 +3402,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
             
             with tab2:
                 chapters = conn.execute(
-                    "SELECT * FROM chapters WHERE lesson_topic_id = ? ORDER BY order_num",
+                    "SELECT * FROM chapters WHERE lesson_topic_id = %s ORDER BY order_num",
                     (lesson_topic_id,)
                 ).fetchall()
                 
@@ -3307,7 +3412,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                     for chapter in chapters:
                         with st.expander(f"{chapter[3]} (Thứ tự: {chapter[4]})"):
                             st.write(f"**Mô tả:** {chapter[3] or 'Không có mô tả'}")
-                            st.write(f"**Số bài học:** {conn.execute('SELECT COUNT(*) FROM lessons WHERE chapter_id = ?', (chapter[0],)).fetchone()[0]}")
+                            st.write(f"**Số bài học:** {conn.execute('SELECT COUNT(*) FROM lessons WHERE chapter_id = %s', (chapter[0],)).fetchone()[0]}")
                             
                             col1, col2 = st.columns(2)
                             with col1:
@@ -3317,14 +3422,14 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                                 if st.button(f"Xóa chương {chapter[0]}", key=f"delete_chapter_{chapter[0]}"):
                                     # Kiểm tra xem có bài học nào thuộc chương này không
                                     lesson_count = conn.execute(
-                                        "SELECT COUNT(*) FROM lessons WHERE chapter_id = ?", 
+                                        "SELECT COUNT(*) FROM lessons WHERE chapter_id = %s", 
                                         (chapter[0],)
                                     ).fetchone()[0]
                                     
                                     if lesson_count > 0:
                                         st.error("Không thể xóa chương đã có bài học! Hãy xóa các bài học trước.")
                                     else:
-                                        conn.execute("DELETE FROM chapters WHERE id = ?", (chapter[0],))
+                                        conn.execute("DELETE FROM chapters WHERE id = %s", (chapter[0],))
                                         conn.commit()
                                         st.success("✅ Chương đã được xóa!")
                                         st.rerun()
@@ -3332,7 +3437,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                     # Form sửa chương
                     if 'editing_chapter' in st.session_state:
                         chapter = conn.execute(
-                            "SELECT * FROM chapters WHERE id = ?",
+                            "SELECT * FROM chapters WHERE id = %s",
                             (st.session_state['editing_chapter'],)
                         ).fetchone()
                         
@@ -3344,7 +3449,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                             if st.form_submit_button("Cập nhật"):
                                 try:
                                     conn.execute(
-                                        "UPDATE chapters SET title = ?, description = ?, order_num = ? WHERE id = ?",
+                                        "UPDATE chapters SET title = %s, description = %s, order_num = %s WHERE id = %s",
                                         (new_title, new_description, new_order, chapter[0])
                                     )
                                     conn.commit()
@@ -3368,7 +3473,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
         if selected_lesson_topic:
             lesson_topic_id = int(selected_lesson_topic.split(" - ")[0])
             chapters = conn.execute(
-                "SELECT id, title FROM chapters WHERE lesson_topic_id = ? ORDER BY order_num",
+                "SELECT id, title FROM chapters WHERE lesson_topic_id = %s ORDER BY order_num",
                 (lesson_topic_id,)
             ).fetchall()
 
@@ -3492,7 +3597,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                                     INSERT INTO lessons (
                                         title, description, content, content_type,
                                         lesson_topic_id, chapter_id, level, is_interactive
-                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                                     """,
                                     (
                                         title,
@@ -3707,7 +3812,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
 
                                 # Sửa lỗi thiếu dấu đóng ngoặc ở đây
                                 conn.execute(
-                                    "INSERT INTO interactive_content (lesson_id, content_type, content_data) VALUES (?, ?, ?)",
+                                    "INSERT INTO interactive_content (lesson_id, content_type, content_data) VALUES (%s, %s, %s)",
                                     (lesson_id, st.session_state.interactive_type, json.dumps(content_data))
                                 )
                                 conn.commit()
@@ -3816,7 +3921,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                 if filter_lesson_topic:
                     lesson_topic_id = int(filter_lesson_topic.split(" - ")[0])
                     chapters = conn.execute(
-                        "SELECT id, title FROM chapters WHERE lesson_topic_id = ? ORDER BY order_num", 
+                        "SELECT id, title FROM chapters WHERE lesson_topic_id = %s ORDER BY order_num", 
                         (lesson_topic_id,)
                     ).fetchall()
                     filter_chapter = st.selectbox(
@@ -3846,15 +3951,15 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
 
         if filter_lesson_topic:
             lesson_topic_id = int(filter_lesson_topic.split(" - ")[0])
-            conditions.append("l.lesson_topic_id = ?")
+            conditions.append("l.lesson_topic_id = %s")
             params.append(lesson_topic_id)
             if filter_chapter:
                 chapter_id = int(filter_chapter.split(" - ")[0])
-                conditions.append("l.chapter_id = ?")
+                conditions.append("l.chapter_id = %s")
                 params.append(chapter_id)
 
         if filter_level:
-            conditions.append("l.level = ?")
+            conditions.append("l.level = %s")
             params.append(filter_level)
 
         if conditions:
@@ -3933,11 +4038,11 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                         if st.button("🗑️ Xóa", key=f"delete_btn_{lesson[0]}"):
                             # Kiểm tra ràng buộc
                             interactive_count = conn.execute(
-                                "SELECT COUNT(*) FROM interactive_content WHERE lesson_id = ?", 
+                                "SELECT COUNT(*) FROM interactive_content WHERE lesson_id = %s", 
                                 (lesson[0],)
                             ).fetchone()[0]
                             progress_count = conn.execute(
-                                "SELECT COUNT(*) FROM user_learning_progress WHERE lesson_id = ?", 
+                                "SELECT COUNT(*) FROM user_learning_progress WHERE lesson_id = %s", 
                                 (lesson[0],)
                             ).fetchone()[0]
                             
@@ -3954,7 +4059,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                                     except json.JSONDecodeError:
                                         pass  # Bỏ qua nếu không phân tích được nội dung
                                 # Xóa bài học
-                                conn.execute("DELETE FROM lessons WHERE id = ?", (lesson[0],))
+                                conn.execute("DELETE FROM lessons WHERE id = %s", (lesson[0],))
                                 conn.commit()
                                 st.success("✅ Đã xóa bài học thành công!")
                                 st.rerun()
@@ -3970,7 +4075,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                 """
                 SELECT title, description, content, content_type, lesson_topic_id, 
                        chapter_id, level, is_interactive 
-                FROM lessons WHERE id = ?
+                FROM lessons WHERE id = %s
                 """,
                 (lesson_id,)
             ).fetchone()
@@ -3992,7 +4097,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
             if selected_lesson_topic:
                 lesson_topic_id = int(selected_lesson_topic.split(" - ")[0])
                 chapters = conn.execute(
-                    "SELECT id, title FROM chapters WHERE lesson_topic_id = ? ORDER BY order_num",
+                    "SELECT id, title FROM chapters WHERE lesson_topic_id = %s ORDER BY order_num",
                     (lesson_topic_id,)
                 ).fetchall()
 
@@ -4117,9 +4222,9 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                                     conn.execute(
                                         """
                                         UPDATE lessons SET
-                                            title = ?, description = ?, content = ?, content_type = ?,
-                                            lesson_topic_id = ?, chapter_id = ?, level = ?, is_interactive = ?
-                                        WHERE id = ?
+                                            title = %s, description = %s, content = %s, content_type = %s,
+                                            lesson_topic_id = %s, chapter_id = %s, level = %s, is_interactive = %s
+                                        WHERE id = %s
                                         """,
                                         (
                                             title,
@@ -4148,7 +4253,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                     # Xử lý chỉnh sửa nội dung tương tác
                     if 'editing_interactive' in st.session_state and st.session_state.editing_interactive == lesson_id:
                         interactive_content = conn.execute(
-                            "SELECT content_type, content_data FROM interactive_content WHERE lesson_id = ?",
+                            "SELECT content_type, content_data FROM interactive_content WHERE lesson_id = %s",
                             (lesson_id,)
                         ).fetchone()
 
@@ -4369,9 +4474,9 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                                             st.stop()
                                         content_data = {"type": "fill_blank", "data": st.session_state.fill_blanks}
 
-                                    conn.execute("DELETE FROM interactive_content WHERE lesson_id = ?", (lesson_id,))
+                                    conn.execute("DELETE FROM interactive_content WHERE lesson_id = %s", (lesson_id,))
                                     conn.execute(
-                                        "INSERT INTO interactive_content (lesson_id, content_type, content_data) VALUES (?, ?, ?)",
+                                        "INSERT INTO interactive_content (lesson_id, content_type, content_data) VALUES (%s, %s, %s)",
                                         (lesson_id, st.session_state.interactive_type, json.dumps(content_data))
                                     )
                                     conn.commit()
@@ -4490,18 +4595,18 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                 params = [f"%{search_query}%"]
                 
                 if search_type == "Tiêu đề" or search_type == "Tất cả":
-                    query += " l.title LIKE ? OR"
+                    query += " l.title LIKE %s OR"
                 if search_type == "Nội dung" or search_type == "Tất cả":
-                    query += " l.content LIKE ? OR"
+                    query += " l.content LIKE %s OR"
                 if search_type == "Mô tả" or search_type == "Tất cả":
-                    query += " l.description LIKE ? OR"
+                    query += " l.description LIKE %s OR"
                 
                 # Bỏ OR cuối cùng
                 query = query[:-3] + ")"
                 
                 # Thêm điều kiện loại nội dung nếu có
                 if content_type_filter:
-                    query += " AND l.content_type IN (" + ",".join(["?"]*len(content_type_filter)) + ")"
+                    query += " AND l.content_type IN (" + ",".join(["%s"]*len(content_type_filter)) + ")"
                     params.extend(content_type_filter)
                 
                 query += " ORDER BY l.created_at DESC"
@@ -4886,7 +4991,7 @@ elif option == "📝 Làm bài thi trắc nghiệm":
             # Bước 1: Lấy id của bản ghi kết quả mới nhất chưa được rewarded
             cursor.execute("""
                 SELECT id FROM results
-                WHERE user_id = ? AND topic = ? AND level = ? AND exam_code = ? AND rewarded = 0
+                WHERE user_id = %s AND topic = %s AND level = %s AND exam_code = %s AND rewarded = 0
                 ORDER BY id DESC
                 LIMIT 1
             """, (
@@ -4902,12 +5007,12 @@ elif option == "📝 Làm bài thi trắc nghiệm":
                 cursor.execute("""
                     UPDATE results
                     SET rewarded = 1
-                    WHERE id = ?
+                    WHERE id = %s
                 """, (result_id,))
                 conn.commit()
 
         cursor = conn.cursor()
-        cursor.execute("SELECT stickers FROM users WHERE id = ?", (st.session_state.user['id'],))
+        cursor.execute("SELECT stickers FROM users WHERE id = %s", (st.session_state.user['id'],))
         st.session_state.user['stickers'] = cursor.fetchone()[0]
 
         st.markdown("---")
@@ -5046,7 +5151,7 @@ elif option == "🎁 Đổi điểm thưởng" and st.session_state.user['role']
                     st.success(message)
                     # Cập nhật lại số sticker
                     cursor = conn.cursor()
-                    cursor.execute("SELECT stickers FROM users WHERE id = ?", (st.session_state.user['id'],))
+                    cursor.execute("SELECT stickers FROM users WHERE id = %s", (st.session_state.user['id'],))
                     st.session_state.user['stickers'] = cursor.fetchone()[0]
                     st.rerun()
                 else:
@@ -5291,8 +5396,8 @@ if option == "📚 Bài học":
                 FROM chapters c
                 LEFT JOIN lessons l ON c.id = l.chapter_id
                 LEFT JOIN user_learning_progress ulp ON 
-                    l.id = ulp.lesson_id AND ulp.user_id = ?
-                WHERE c.lesson_topic_id = ?
+                    l.id = ulp.lesson_id AND ulp.user_id = %s
+                WHERE c.lesson_topic_id = %s
                 GROUP BY c.id
                 ORDER BY c.order_num
             """, (st.session_state.user['id'], lesson_topic_id)).fetchall()
@@ -5314,8 +5419,8 @@ if option == "📚 Bài học":
                                    IFNULL(ulp.last_accessed, 'Chưa học') as last_accessed
                             FROM lessons l
                             LEFT JOIN user_learning_progress ulp ON 
-                                l.id = ulp.lesson_id AND ulp.user_id = ?
-                            WHERE l.chapter_id = ?
+                                l.id = ulp.lesson_id AND ulp.user_id = %s
+                            WHERE l.chapter_id = %s
                             ORDER BY l.created_at
                         """, (st.session_state.user['id'], chapter[0])).fetchall()
                         
@@ -5351,7 +5456,7 @@ if option == "📚 Bài học":
             lesson = conn.execute("""
                 SELECT id, title, description, content_type, content, level, is_interactive
                 FROM lessons
-                WHERE id = ?
+                WHERE id = %s
             """, (lesson_id,)).fetchone()
 
             if lesson:
@@ -5412,7 +5517,7 @@ if option == "📚 Bài học":
                     interactive_content = conn.execute("""
                         SELECT content_type, content_data
                         FROM interactive_content
-                        WHERE lesson_id = ?
+                        WHERE lesson_id = %s
                     """, (lesson_id,)).fetchone()
 
                     if interactive_content:
@@ -5451,7 +5556,7 @@ if option == "📚 Bài học":
                                     conn.execute("""
                                         INSERT OR REPLACE INTO user_learning_progress 
                                         (user_id, lesson_id, is_completed, progress_percent, last_accessed)
-                                        VALUES (?, ?, ?, ?, ?)
+                                        VALUES (%s, %s, %s, %s, %s)
                                     """, (
                                         st.session_state.user['id'],
                                         lesson_id,
@@ -5490,7 +5595,7 @@ if option == "📚 Bài học":
                                 conn.execute("""
                                     INSERT OR REPLACE INTO user_learning_progress 
                                     (user_id, lesson_id, is_completed, progress_percent, last_accessed)
-                                    VALUES (?, ?, ?, ?, ?)
+                                    VALUES (%s, %s, %s, %s, %s)
                                 """, (
                                     st.session_state.user['id'],
                                     lesson_id,
@@ -5535,7 +5640,7 @@ if option == "📚 Bài học":
                                     conn.execute("""
                                         INSERT OR REPLACE INTO user_learning_progress 
                                         (user_id, lesson_id, is_completed, progress_percent, last_accessed)
-                                        VALUES (?, ?, ?, ?, ?)
+                                        VALUES (%s, %s, %s, %s, %s)
                                     """, (
                                         st.session_state.user['id'],
                                         lesson_id,
@@ -5564,7 +5669,7 @@ if option == "📚 Bài học":
                         conn.execute("""
                             INSERT OR REPLACE INTO user_learning_progress 
                             (user_id, lesson_id, is_completed, progress_percent, last_accessed)
-                            VALUES (?, ?, ?, ?, ?)
+                            VALUES (%s, %s, %s, %s, %s)
                         """, (
                             st.session_state.user['id'],
                             lesson_id,
@@ -5582,7 +5687,7 @@ if option == "📚 Bài học":
                 progress_data = conn.execute("""
                     SELECT is_completed, progress_percent, notes 
                     FROM user_learning_progress 
-                    WHERE user_id = ? AND lesson_id = ?
+                    WHERE user_id = %s AND lesson_id = %s
                 """, (st.session_state.user['id'], lesson_id)).fetchone() or (False, 0, "")
                 
                 with st.form("progress_form"):
@@ -5608,7 +5713,7 @@ if option == "📚 Bài học":
                                 INSERT OR REPLACE INTO user_learning_progress (
                                     user_id, lesson_id, is_completed, 
                                     progress_percent, notes, last_accessed
-                                ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                                ) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
                             """, (
                                 st.session_state.user['id'], 
                                 lesson_id, 
