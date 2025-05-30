@@ -7,3 +7,5 @@ xhtml2pdf
 Pillow
 plotly
 streamlit-autorefresh
+psycopg2-binary
+python-dotenv
