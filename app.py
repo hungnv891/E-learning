@@ -15,6 +15,8 @@ import re
 from io import BytesIO
 from xhtml2pdf import pisa
 from PIL import Image
+import psycopg2
+from psycopg2 import sql
 
 st.set_page_config(page_title="Thi trắc nghiệm", layout="wide")
 
