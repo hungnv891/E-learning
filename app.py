@@ -86,7 +86,7 @@ local_css()
 def get_connection():
     try:
         # Lấy connection string từ biến môi trường (Railway tự động thêm DATABASE_URL)
-        conn = psycopg2.connect(st.secrets["DATABASE_URL"])
+        conn = psycopg2.connect(st.secrets["postgresql://postgres:FmiIrpuNIcjzytEuVVWhZYIhKnpvRlGh@postgres.railway.internal:5432/railway"])
         return conn
     except Exception as e:
         st.error(f"Không thể kết nối database: {e}")
