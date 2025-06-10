@@ -250,7 +250,71 @@ def init_db(conn):
         FOREIGN KEY(user_id) REFERENCES users(id),
         FOREIGN KEY(question_id) REFERENCES guess_image_game(id)
     )
-    """)    
+    """)
+
+    # Thêm các bảng mới cho chức năng Reading
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reading_topics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reading_chapters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            order_num INTEGER,
+            FOREIGN KEY (topic_id) REFERENCES reading_topics (id)
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reading_contents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chapter_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            image_url TEXT,
+            audio_url TEXT,
+            order_num INTEGER,
+            tts_language TEXT,
+            FOREIGN KEY (chapter_id) REFERENCES reading_chapters (id)
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reading_questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_id INTEGER NOT NULL,
+            question_type TEXT NOT NULL,
+            question_text TEXT NOT NULL,
+            options TEXT,
+            correct_answer TEXT NOT NULL,
+            points INTEGER DEFAULT 1,
+            FOREIGN KEY (content_id) REFERENCES reading_contents(id) ON DELETE CASCADE
+        )
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_reading_progress (
+            user_id INTEGER NOT NULL,
+            content_id INTEGER NOT NULL,
+            score REAL,
+            is_completed BOOLEAN DEFAULT 0,
+            completed_at TIMESTAMP,
+            PRIMARY KEY (user_id, content_id),
+            FOREIGN KEY (user_id) REFERENCES users (id),
+            FOREIGN KEY (content_id) REFERENCES reading_contents (id)
+        )
+    """)
+    
+    
+
+    
     
     conn.commit()
 
@@ -2587,12 +2651,14 @@ if st.session_state.user['role'] == 'admin':
         "👥 Quản lý người dùng",
         "🎁 Quản lý phần quà",
         "📖 Quản lý bài học",
+        "📄 Reading",
         "🎮 Game"
     ])
 else:
     st.sidebar.title(f"👤 Người dùng: {st.session_state.user['username']}")
     option = st.sidebar.radio("📌 Chọn chức năng", [
         "📚 Bài học",
+        "📄 Reading",
         "📝 Làm bài thi trắc nghiệm", 
         "🏆 Lịch sử thi",
         "🎁 Đổi điểm thưởng",
@@ -3549,7 +3615,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                     else:
                         # Hiển thị form nhập nội dung tương tác tương ứng
                         if st.session_state.interactive_type == "quiz":
-                            st.info("Thêm câu hỏi trắc nghiệm")
+                            st.info("📝 Thêm câu hỏi trắc nghiệm")
 
                             if "quiz_questions" not in st.session_state:
                                 st.session_state.quiz_questions = []
@@ -3564,7 +3630,7 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
 
                                 if st.form_submit_button("➕ Thêm câu hỏi"):
                                     if not question_text or not option_a or not option_b or not option_c or not option_d:
-                                        st.warning("Vui lòng nhập đầy đủ thông tin câu hỏi.")
+                                        st.warning("⚠️ Vui lòng nhập đầy đủ thông tin cho tất cả các lựa chọn.")
                                     else:
                                         st.session_state.quiz_questions.append({
                                             "question": question_text,
@@ -3576,15 +3642,18 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                                             },
                                             "correct": correct_answer
                                         })
-                                        st.success("✅ Đã thêm câu hỏi!")
+                                        st.success("✅ Câu hỏi đã được thêm vào danh sách!")
 
-                            if st.session_state.get("quiz_questions"):
+                            # Hiển thị danh sách câu hỏi đã thêm
+                            if st.session_state.quiz_questions:
                                 st.subheader("📋 Danh sách câu hỏi đã thêm")
                                 for i, q in enumerate(st.session_state.quiz_questions, 1):
                                     st.markdown(f"**{i}. {q['question']}**")
-                                    for opt, val in q['options'].items():
-                                        st.markdown(f"- {opt}: {val}")
-                                    st.markdown(f"✅ Đáp án: **{q['correct']}**")
+                                    for key in ["A", "B", "C", "D"]:
+                                        st.markdown(f"- {key}. {q['options'][key]}")
+                                    st.markdown(f"✅ **Đáp án đúng**: {q['correct']}")
+                                    st.markdown("---")
+
 
                         elif st.session_state.interactive_type == "flashcard":
                             st.info("Thêm flashcards")
@@ -4190,7 +4259,8 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                                 if "quiz_questions" not in st.session_state:
                                     st.session_state.quiz_questions = content_data["data"] if content_type == "quiz" else []
 
-                                st.info("Chỉnh sửa câu hỏi trắc nghiệm")
+                                st.info("✏️ Chỉnh sửa hoặc thêm câu hỏi trắc nghiệm")
+
                                 with st.form(f"edit_quiz_question_form_{lesson_id}"):
                                     question_text = st.text_area("Câu hỏi*", key=f"edit_q_text_{lesson_id}")
                                     option_a = st.text_input("A", key=f"edit_opt_a_{lesson_id}")
@@ -4198,14 +4268,14 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                                     option_c = st.text_input("C", key=f"edit_opt_c_{lesson_id}")
                                     option_d = st.text_input("D", key=f"edit_opt_d_{lesson_id}")
                                     correct_answer = st.selectbox(
-                                        "Đáp án đúng*", 
-                                        ["A", "B", "C", "D"], 
+                                        "Đáp án đúng*",
+                                        ["A", "B", "C", "D"],
                                         key=f"edit_correct_{lesson_id}"
                                     )
 
                                     if st.form_submit_button("➕ Thêm câu hỏi"):
                                         if not question_text or not option_a or not option_b or not option_c or not option_d:
-                                            st.warning("Vui lòng nhập đầy đủ thông tin câu hỏi.")
+                                            st.warning("⚠️ Vui lòng nhập đầy đủ thông tin tất cả các trường.")
                                         else:
                                             st.session_state.quiz_questions.append({
                                                 "question": question_text,
@@ -4217,20 +4287,22 @@ if option == "📖 Quản lý bài học" and st.session_state.user['role'] == '
                                                 },
                                                 "correct": correct_answer
                                             })
-                                            st.success("✅ Đã thêm câu hỏi!")
+                                            st.success("✅ Câu hỏi đã được thêm!")
                                             st.rerun()
 
                                 if st.session_state.quiz_questions:
-                                    st.subheader("📋 Danh sách câu hỏi đã thêm")
-                                    for i, q in enumerate(st.session_state.quiz_questions, 1):
-                                        with st.expander(f"Câu hỏi {i}: {q['question'][:50]}..."):
+                                    st.subheader("📋 Danh sách câu hỏi hiện có")
+                                    for i, q in enumerate(st.session_state.quiz_questions):
+                                        with st.expander(f"Câu hỏi {i+1}: {q['question'][:50]}..."):
                                             st.markdown(f"**{q['question']}**")
-                                            for opt, val in q['options'].items():
-                                                st.markdown(f"- {opt}: {val}")
-                                            st.markdown(f"✅ Đáp án: **{q['correct']}**")
-                                            if st.button(f"🗑️ Xoá câu hỏi {i}", key=f"delete_quiz_{lesson_id}_{i}"):
-                                                del st.session_state.quiz_questions[i-1]
+                                            for opt in ["A", "B", "C", "D"]:
+                                                st.markdown(f"- {opt}. {q['options'].get(opt, '')}")
+                                            st.markdown(f"✅ **Đáp án đúng**: {q['correct']}")
+                                            if st.button(f"🗑️ Xoá câu hỏi {i+1}", key=f"delete_quiz_{lesson_id}_{i}"):
+                                                del st.session_state.quiz_questions[i]
+                                                st.success("🗑️ Câu hỏi đã bị xoá.")
                                                 st.rerun()
+
 
                             elif st.session_state.interactive_type == "flashcard":
                                 if "flashcards" not in st.session_state:
@@ -5421,7 +5493,8 @@ if option == "📚 Bài học":
 
                         st.subheader("📝 Nội dung tương tác")
                         if content_type == "quiz":
-                            st.info("Câu hỏi trắc nghiệm")
+                            st.info("📘 Câu hỏi trắc nghiệm")
+
                             if "quiz_answers" not in st.session_state:
                                 st.session_state.quiz_answers = {}
                             if "quiz_submitted" not in st.session_state:
@@ -5429,24 +5502,31 @@ if option == "📚 Bài học":
 
                             with st.form("quiz_form"):
                                 for i, q in enumerate(content_data):
-                                    st.markdown(f"**Câu hỏi {i+1}: {q['question']}**")
-                                    answer = st.radio(
-                                        f"Chọn đáp án cho câu hỏi {i+1}",
-                                        options=list(q['options'].keys()),
-                                        format_func=lambda x: f"{x}: {q['options'][x]}",
-                                        key=f"quiz_{i}"
+                                    st.markdown(f"**Câu hỏi {i+1}:** {q['question']}")
+                                    options = list(q['options'].keys())  # ["A", "B", "C", "D"]
+
+                                    selected = st.radio(
+                                        label="Chọn đáp án:",
+                                        options=options,
+                                        format_func=lambda opt: f"{opt}: {q['options'][opt]}",
+                                        key=f"quiz_{i}",
+                                        index=options.index(st.session_state.quiz_answers[i]['answer']) if i in st.session_state.quiz_answers else None
                                     )
+
                                     st.session_state.quiz_answers[i] = {
-                                        'answer': answer,
-                                        'correct': q['correct']
+                                        "answer": selected,
+                                        "correct": q["correct"]
                                     }
 
-                                if st.form_submit_button("Nộp bài"):
+                                if st.form_submit_button("📤 Nộp bài"):
                                     st.session_state.quiz_submitted = True
-                                    correct_count = sum(1 for i, ans in st.session_state.quiz_answers.items() 
-                                                      if ans['answer'] == ans['correct'])
-                                    st.success(f"Bạn trả lời đúng {correct_count}/{len(content_data)} câu hỏi!")
-                                    # Cập nhật tiến độ
+                                    correct_count = sum(
+                                        1 for i, ans in st.session_state.quiz_answers.items()
+                                        if ans['answer'] == ans['correct']
+                                    )
+                                    st.success(f"🎉 Bạn đã trả lời đúng {correct_count}/{len(content_data)} câu hỏi!")
+
+                                    # Cập nhật tiến độ học
                                     progress = (correct_count / len(content_data)) * 100
                                     conn.execute("""
                                         INSERT OR REPLACE INTO user_learning_progress 
@@ -5462,15 +5542,17 @@ if option == "📚 Bài học":
                                     conn.commit()
 
                             if st.session_state.quiz_submitted:
-                                st.subheader("Kết quả")
+                                st.subheader("📊 Kết quả chi tiết")
                                 for i, q in enumerate(content_data):
-                                    user_answer = st.session_state.quiz_answers.get(i, {})
-                                    is_correct = user_answer.get('answer') == q['correct']
-                                    st.markdown(f"**Câu {i+1}: {q['question']}**")
-                                    st.markdown(f"- Bạn chọn: {user_answer.get('answer', 'Chưa trả lời')}: "
-                                              f"{q['options'].get(user_answer.get('answer', ''), '')}")
-                                    st.markdown(f"- Đáp án đúng: {q['correct']}: {q['options'][q['correct']]}")
-                                    st.markdown(f"{'✅ Đúng' if is_correct else '❌ Sai'}")
+                                    user_answer = st.session_state.quiz_answers.get(i, {}).get("answer", "Chưa trả lời")
+                                    correct_answer = q["correct"]
+                                    is_correct = user_answer == correct_answer
+
+                                    st.markdown(f"**Câu {i+1}:** {q['question']}")
+                                    st.markdown(f"- Bạn chọn: {user_answer}: {q['options'].get(user_answer, 'Không có')}")
+                                    st.markdown(f"- Đáp án đúng: {correct_answer}: {q['options'][correct_answer]}")
+                                    st.markdown("✅ Đúng" if is_correct else "❌ Sai")
+
 
                         elif content_type == "flashcard":
                             st.info("Flashcards")
@@ -5620,6 +5702,1470 @@ if option == "📚 Bài học":
                             st.success("Đã cập nhật tiến độ học tập!")
                         except Exception as e:
                             st.error(f"Lỗi: {str(e)}")
+                            
+# ==============================================
+# PHẦN ADMIN - QUẢN LÝ READING
+# ==============================================
+if option == "📄 Reading" and st.session_state.user['role'] == 'admin':
+    st.title("📄 Reading")
+    
+    tab1, tab2, tab3, tab4 = st.tabs(["Chủ đề", "Chương", "Bài Reading", "Câu hỏi"])
+    
+    # TAB 1: QUẢN LÝ CHỦ ĐỀ
+    with tab1:
+        st.subheader("Quản lý chủ đề")
+        
+        # Form thêm chủ đề mới
+        with st.form("add_topic_form"):
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                topic_title = st.text_input("Tiêu đề chủ đề*")
+            with col2:
+                topic_order = st.number_input("Thứ tự", min_value=1, value=1)
+            topic_desc = st.text_area("Mô tả")
+            
+            submitted = st.form_submit_button("Thêm chủ đề")
+            if submitted:
+                if not topic_title:
+                    st.error("Tiêu đề chủ đề là bắt buộc")
+                else:
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "INSERT INTO reading_topics (title, description) VALUES (?, ?)", 
+                        (topic_title, topic_desc)
+                    )
+                    conn.commit()
+                    conn.close()
+                    st.success("Đã thêm chủ đề mới!")
+                    st.rerun()
+        
+        # Danh sách chủ đề
+        st.subheader("Danh sách chủ đề")
+        conn = get_connection()
+        topics = conn.execute("SELECT id, title, description FROM reading_topics ORDER BY created_at").fetchall()
+        conn.close()
+        
+        for topic in topics:
+            with st.expander(f"📚 {topic[1]}"):
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.write(topic[2] if topic[2] else "Không có mô tả")
+                
+                with col2:
+                    if st.button(f"Xóa", key=f"del_topic_{topic[0]}"):
+                        conn = get_connection()
+                        conn.execute("DELETE FROM reading_topics WHERE id = ?", (topic[0],))
+                        conn.commit()
+                        conn.close()
+                        st.success("Đã xóa chủ đề!")
+                        st.rerun()
+    
+    # TAB 2: QUẢN LÝ CHƯƠNG
+    with tab2:
+        st.subheader("Quản lý chương")
+        
+        # Lấy danh sách chủ đề để chọn
+        conn = get_connection()
+        topics = conn.execute("SELECT id, title FROM reading_topics ORDER BY title").fetchall()
+        conn.close()
+        
+        selected_topic_id = st.selectbox(
+            "Chọn chủ đề", 
+            topics, 
+            format_func=lambda x: x[1],
+            key="chapter_topic_select"
+        )
+        
+        if selected_topic_id:
+            # Form thêm chương mới
+            with st.form("add_chapter_form"):
+                chapter_title = st.text_input("Tiêu đề chương*")
+                chapter_order = st.number_input("Thứ tự chương", min_value=1, value=1)
+                
+                submitted = st.form_submit_button("Thêm chương")
+                if submitted:
+                    if not chapter_title:
+                        st.error("Tiêu đề chương là bắt buộc")
+                    else:
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute(
+                            "INSERT INTO reading_chapters (topic_id, title, order_num) VALUES (?, ?, ?)", 
+                            (selected_topic_id[0], chapter_title, chapter_order)
+                        )
+                        conn.commit()
+                        conn.close()
+                        st.success("Đã thêm chương mới!")
+                        st.rerun()
+            
+            # Danh sách chương thuộc chủ đề đã chọn
+            st.subheader(f"Danh sách chương trong chủ đề '{selected_topic_id[1]}'")
+            conn = get_connection()
+            chapters = conn.execute(
+                "SELECT id, title, order_num FROM reading_chapters WHERE topic_id = ? ORDER BY order_num", 
+                (selected_topic_id[0],)
+            ).fetchall()
+            conn.close()
+            
+            for chapter in chapters:
+                with st.expander(f"📖 {chapter[1]} (Thứ tự: {chapter[2]})"):
+                    col1, col2 = st.columns([4, 1])
+                    with col2:
+                        if st.button(f"Xóa", key=f"del_chapter_{chapter[0]}"):
+                            conn = get_connection()
+                            conn.execute("DELETE FROM reading_chapters WHERE id = ?", (chapter[0],))
+                            conn.commit()
+                            conn.close()
+                            st.success("Đã xóa chương!")
+                            st.rerun()
+    
+    # TAB 3: QUẢN LÝ BÀI READING
+    with tab3:
+        st.subheader("Quản lý bài Reading")
+
+        conn = get_connection()
+        topics = conn.execute("SELECT id, title FROM reading_topics ORDER BY title").fetchall()
+
+        selected_topic_id = st.selectbox(
+            "Chọn chủ đề", 
+            topics, 
+            format_func=lambda x: x[1],
+            key="content_topic_select"
+        )
+
+        if selected_topic_id:
+            chapters = conn.execute(
+                "SELECT id, title FROM reading_chapters WHERE topic_id = ? ORDER BY order_num", 
+                (selected_topic_id[0],)
+            ).fetchall()
+
+            selected_chapter_id = st.selectbox(
+                "Chọn chương", 
+                chapters, 
+                format_func=lambda x: x[1],
+                key="content_chapter_select"
+            )
+
+            if selected_chapter_id:
+                # --- THÊM NÚT IMPORT TỪ CSV VÀ TẢI TEMPLATE ---
+                with st.expander("Import bài Reading từ CSV"):
+                    col1, col2 = st.columns([1, 1])
+                    
+                    with col1:
+                        # Nút tải template CSV
+                        if st.button("📥 Tải Template CSV Mẫu"):
+                            import pandas as pd
+                            import io
+                            
+                            # Tạo dữ liệu mẫu
+                            template_data = {
+                                'order_num': [1, 2, 3],
+                                'title': [
+                                    "Bài đọc mẫu 1", 
+                                    "Bài đọc có hình ảnh", 
+                                    "Bài đọc có âm thanh"
+                                ],
+                                'content': [
+                                    "Đây là nội dung bài đọc mẫu 1.\nCó thể xuống dòng bằng cách nhấn Enter.",
+                                    "Bài đọc này có kèm hình ảnh.\nURL hình ảnh được điền ở cột image_url.",
+                                    "Bài đọc này có kèm âm thanh.\nURL âm thanh được điền ở cột audio_url."
+                                ],
+                                'image_url': [
+                                    "", 
+                                    "https://example.com/sample-image.jpg", 
+                                    ""
+                                ],
+                                'audio_url': [
+                                    "", 
+                                    "", 
+                                    "https://example.com/sample-audio.mp3"
+                                ],
+                                'tts_language': ["vi-VN", "en-US", "vi-VN"]
+                            }
+                            
+                            df_template = pd.DataFrame(template_data)
+                            
+                            # Tạo file CSV trong bộ nhớ
+                            csv_buffer = io.StringIO()
+                            df_template.to_csv(csv_buffer, index=False, encoding='utf-8-sig')
+                            csv_str = csv_buffer.getvalue()
+                            
+                            # Hiển thị nút download
+                            st.download_button(
+                                label="⬇️ Download Template",
+                                data=csv_str,
+                                file_name="reading_template.csv",
+                                mime="text/csv",
+                                key="download_template"
+                            )
+                            
+                            st.info("Template đã bao gồm hướng dẫn sử dụng trong dữ liệu mẫu")
+                    
+                    with col2:
+                        st.write("""
+                        **Hướng dẫn sử dụng:**
+                        1. Tải template mẫu
+                        2. Điền thông tin bài reading
+                        3. Upload file CSV để import
+                        
+                        **Các cột bắt buộc:**
+                        - `order_num`: Thứ tự hiển thị
+                        - `title`: Tiêu đề bài reading
+                        - `content`: Nội dung (dùng \\n để xuống dòng)
+                        
+                        **Các cột tùy chọn:**
+                        - `image_url`: URL hình ảnh
+                        - `audio_url`: URL âm thanh
+                        - `tts_language`: Ngôn ngữ đọc (vi-VN, en-US,...)
+                        """)
+                    
+                    # Phần upload CSV
+                    uploaded_file = st.file_uploader(
+                        "Chọn file CSV để import", 
+                        type=["csv"], 
+                        key="csv_import_uploader"
+                    )
+                    
+                    if uploaded_file is not None:
+                        try:
+                            import pandas as pd
+                            import io
+                            
+                            # Đọc file CSV
+                            df = pd.read_csv(io.StringIO(uploaded_file.getvalue().decode('utf-8')))
+                            
+                            # Kiểm tra các cột bắt buộc
+                            required_columns = ['order_num', 'title', 'content']
+                            if not all(col in df.columns for col in required_columns):
+                                missing = [col for col in required_columns if col not in df.columns]
+                                st.error(f"Thiếu các cột bắt buộc: {', '.join(missing)}")
+                            else:
+                                st.success(f"Đã đọc thành công {len(df)} bài Reading từ file CSV")
+                                
+                                # Hiển thị preview
+                                st.write("Preview dữ liệu:")
+                                st.dataframe(df.head())
+                                
+                                if st.button("Import dữ liệu vào chương hiện tại", key="import_data_btn"):
+                                    cursor = conn.cursor()
+                                    imported_count = 0
+                                    
+                                    for _, row in df.iterrows():
+                                        try:
+                                            # Chuẩn bị dữ liệu
+                                            order_num = int(row['order_num'])
+                                            title = f"<div style='font-family:Arial; font-size:24px;'>{row['title']}</div>"
+                                            
+                                            # Xử lý nội dung với ngắt dòng
+                                            content = str(row['content'])
+                                            # Thay thế \\n thành \n trước
+                                            content = content.replace('\\n', '\n')
+                                            # Sau đó thay thế \n thành <br>
+                                            content = content.replace('\n', '<br>')
+                                            content = f"<div style='font-family:Arial; font-size:16px;'>{content}</div>"
+                                            
+                                            image_url = row.get('image_url', '')
+                                            audio_url = row.get('audio_url', '')
+                                            tts_language = row.get('tts_language', 'vi-VN')
+                                            
+                                            # Thêm vào database
+                                            cursor.execute(
+                                                """INSERT INTO reading_contents 
+                                                (chapter_id, title, content, image_url, audio_url, order_num, tts_language) 
+                                                VALUES (?, ?, ?, ?, ?, ?, ?)""", 
+                                                (selected_chapter_id[0], title, content, 
+                                                 image_url if pd.notna(image_url) and image_url != '' else None, 
+                                                 audio_url if pd.notna(audio_url) and audio_url != '' else None, 
+                                                 order_num, tts_language)
+                                            )
+                                            imported_count += 1
+                                        except Exception as e:
+                                            st.warning(f"Lỗi khi import bài {row['title']}: {str(e)}")
+                                    
+                                    conn.commit()
+                                    st.success(f"Đã import thành công {imported_count}/{len(df)} bài Reading!")
+                                    st.rerun()
+                        
+                        except Exception as e:
+                            st.error(f"Lỗi khi đọc file CSV: {str(e)}")
+                            
+                # Hiển thị danh sách bài reading hiện có và nút xóa/sửa
+                st.subheader("Danh sách bài Reading")
+                existing_contents = conn.execute(
+                    "SELECT id, title, content, order_num, image_url, audio_url, tts_language FROM reading_contents WHERE chapter_id = ? ORDER BY order_num",
+                    (selected_chapter_id[0],)
+                ).fetchall()
+                
+                if existing_contents:
+                    for content in existing_contents:
+                        col1, col2, col3 = st.columns([4, 1, 1])
+                        with col1:
+                            # Hiển thị tiêu đề (loại bỏ thẻ HTML nếu có)
+                            import re
+                            clean_title = re.sub('<[^<]+?>', '', content[1])
+                            st.write(f"{content[3]}. {clean_title}")
+                        with col2:
+                            if st.button(f"Sửa", key=f"edit_{content[0]}"):
+                                st.session_state['editing_content_id'] = content[0]
+                                st.session_state['edit_mode'] = True
+                                
+                                # Lấy thông tin bài reading để hiển thị trong form chỉnh sửa
+                                content_data = conn.execute(
+                                    "SELECT id, title, content, order_num, image_url, audio_url, tts_language FROM reading_contents WHERE id = ?",
+                                    (content[0],)
+                                ).fetchone()
+                                
+                                # Phân tích HTML để lấy thông tin định dạng
+                                from bs4 import BeautifulSoup
+                                soup_title = BeautifulSoup(content_data[1], 'html.parser')
+                                soup_content = BeautifulSoup(content_data[2], 'html.parser')
+                                
+                                # Lưu thông tin vào session state để form chỉnh sửa
+                                st.session_state['edit_content_data'] = {
+                                    'title': soup_title.get_text(),
+                                    'content': soup_content.get_text().replace('<br>', '\n'),
+                                    'order_num': content_data[3],
+                                    'image_url': content_data[4],
+                                    'audio_url': content_data[5],
+                                    'tts_language': content_data[6],
+                                    'title_style': soup_title.div['style'] if soup_title.div else '',
+                                    'content_style': soup_content.div['style'] if soup_content.div else ''
+                                }
+                                st.rerun()
+                        with col3:
+                            if st.button(f"Xóa", key=f"delete_{content[0]}"):
+                                # Xóa bài reading
+                                conn.execute("DELETE FROM reading_contents WHERE id = ?", (content[0],))
+                                conn.commit()
+                                st.success(f"Đã xóa bài reading: {clean_title}")
+                                st.rerun()
+                    st.write("---")
+                else:
+                    st.info("Chưa có bài reading nào trong chương này")
+                
+                # Kiểm tra nếu đang ở chế độ chỉnh sửa
+                edit_mode = st.session_state.get('edit_mode', False)
+                editing_content_id = st.session_state.get('editing_content_id', None)
+                
+                # --- Hình ảnh ---
+                st.subheader("Hình ảnh")
+                image_option = st.radio(
+                    "Chọn nguồn hình ảnh",
+                    ["Upload file", "URL"],
+                    key="image_option",
+                    horizontal=True
+                )
+
+                image_path = None
+                image_file = None
+                image_url = None
+                image_preview_url = None
+
+                # Nếu ở chế độ chỉnh sửa, hiển thị hình ảnh hiện tại
+                if edit_mode and 'edit_content_data' in st.session_state:
+                    current_image = st.session_state['edit_content_data'].get('image_url')
+                    if current_image:
+                        if current_image.startswith('http'):
+                            image_url = current_image
+                            image_option = "URL"
+                        else:
+                            # Nếu là file local, hiển thị ảnh từ đường dẫn
+                            image_option = "Upload file"
+                            image_preview_url = current_image
+
+                if image_option == "Upload file":
+                    image_file = st.file_uploader("Tải lên hình ảnh", type=["jpg", "png", "jpeg"], key="image_uploader")
+                    if image_file:
+                        os.makedirs("uploads/images", exist_ok=True)
+                        image_path = f"uploads/images/{image_file.name}"
+                        with open(image_path, "wb") as f:
+                            f.write(image_file.getbuffer())
+                        image_preview_url = image_path
+                    elif edit_mode and 'edit_content_data' in st.session_state and st.session_state['edit_content_data'].get('image_url') and not st.session_state['edit_content_data']['image_url'].startswith('http'):
+                        image_preview_url = st.session_state['edit_content_data']['image_url']
+                else:
+                    image_url = st.text_input("Nhập URL hình ảnh", 
+                                            value=st.session_state['edit_content_data'].get('image_url', '') if edit_mode and 'edit_content_data' in st.session_state and st.session_state['edit_content_data'].get('image_url', '').startswith('http') else '',
+                                            key="image_url_input", 
+                                            placeholder="https://...")
+                    if image_url:
+                        image_path = image_url
+                        image_preview_url = image_url
+
+                # ✅ Hiển thị ảnh căn giữa
+                if image_preview_url:
+                    st.markdown(
+                        f"""
+                        <div style='text-align: center;'>
+                            <img src='{image_preview_url}' style='width: 100%; max-width: 1350px; height: auto; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);'>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                # --- Âm thanh ---
+                st.subheader("Âm thanh")
+                audio_option = st.radio("Chọn nguồn âm thanh", ["Upload file", "URL"], key="audio_option", horizontal=True)
+
+                audio_file = None
+                audio_url = None
+                audio_path = None
+
+                # Nếu ở chế độ chỉnh sửa, hiển thị âm thanh hiện tại
+                if edit_mode and 'edit_content_data' in st.session_state:
+                    current_audio = st.session_state['edit_content_data'].get('audio_url')
+                    if current_audio:
+                        if current_audio.startswith('http'):
+                            audio_url = current_audio
+                            audio_option = "URL"
+                        else:
+                            # Nếu là file local, hiển thị player
+                            audio_option = "Upload file"
+                            st.audio(current_audio, format='audio/mp3')
+
+                if audio_option == "Upload file":
+                    audio_file = st.file_uploader("Tải lên âm thanh", type=["mp3", "wav"], key="audio_uploader")
+                    if audio_file:
+                        os.makedirs("uploads/audios", exist_ok=True)
+                        audio_path = f"uploads/audios/{audio_file.name}"
+                        with open(audio_path, "wb") as f:
+                            f.write(audio_file.getbuffer())
+                    elif edit_mode and 'edit_content_data' in st.session_state and st.session_state['edit_content_data'].get('audio_url') and not st.session_state['edit_content_data']['audio_url'].startswith('http'):
+                        st.audio(st.session_state['edit_content_data']['audio_url'], format='audio/mp3')
+                else:
+                    audio_url = st.text_input("Nhập URL âm thanh", 
+                                             value=st.session_state['edit_content_data'].get('audio_url', '') if edit_mode and 'edit_content_data' in st.session_state and st.session_state['edit_content_data'].get('audio_url', '').startswith('http') else '',
+                                             key="audio_url_input", 
+                                             placeholder="https://...")
+                    if audio_url:
+                        audio_path = audio_url
+
+                # --- Form thêm/sửa bài Reading ---
+                form_container = st.container()
+
+                with form_container.form("add_content_form"):
+                    # Title Section
+                    st.subheader("Tùy chỉnh tiêu đề")
+                    col_title1, col_title2 = st.columns([3, 1])
+                    
+                    with col_title1:
+                        # Lấy giá trị tiêu đề hiện tại nếu đang ở chế độ chỉnh sửa
+                        content_title = st.text_input("Tiêu đề bài Reading*", 
+                                                   value=st.session_state['edit_content_data']['title'] if edit_mode and 'edit_content_data' in st.session_state else '',
+                                                   key="content_title_input")
+                    
+                    with col_title2:
+                        # Phân tích style tiêu đề hiện tại
+                        title_font = "Arial"
+                        bold_title = False
+                        italic_title = False
+                        title_size = 24
+                        
+                        if edit_mode and 'edit_content_data' in st.session_state:
+                            title_style = st.session_state['edit_content_data']['title_style']
+                            if 'font-family:' in title_style:
+                                title_font = title_style.split('font-family:')[1].split(';')[0].strip()
+                            if 'font-weight:bold' in title_style:
+                                bold_title = True
+                            if 'font-style:italic' in title_style:
+                                italic_title = True
+                            if 'font-size:' in title_style:
+                                title_size = int(title_style.split('font-size:')[1].split('px')[0].strip())
+                        
+                        title_font = st.selectbox("Font chữ tiêu đề", 
+                                                ["Arial", "Times New Roman", "Courier New", "Verdana", "Tahoma"],
+                                                index=["Arial", "Times New Roman", "Courier New", "Verdana", "Tahoma"].index(title_font) if title_font in ["Arial", "Times New Roman", "Courier New", "Verdana", "Tahoma"] else 0,
+                                                key="title_font_select")
+                    
+                    col_title_style1, col_title_style2, col_title_style3 = st.columns(3)
+                    with col_title_style1:
+                        bold_title = st.checkbox("In đậm tiêu đề", value=bold_title, key="bold_title_check")
+                    with col_title_style2:
+                        italic_title = st.checkbox("In nghiêng tiêu đề", value=italic_title, key="italic_title_check")
+                    with col_title_style3:
+                        title_size = st.slider("Cỡ chữ tiêu đề", min_value=10, max_value=36, value=title_size, key="title_size_slider")
+                    
+                    # Content Section
+                    st.subheader("Tùy chỉnh nội dung")
+                    col_content1, col_content2 = st.columns([3, 1])
+                    
+                    with col_content2:
+                        # Phân tích style nội dung hiện tại
+                        content_font = "Arial"
+                        bold_content = False
+                        italic_content = False
+                        content_size = 18
+                        content_align = "Trái"
+                        
+                        if edit_mode and 'edit_content_data' in st.session_state:
+                            content_style = st.session_state['edit_content_data']['content_style']
+                            if 'font-family:' in content_style:
+                                content_font = content_style.split('font-family:')[1].split(';')[0].strip()
+                            if 'font-weight:bold' in content_style:
+                                bold_content = True
+                            if 'font-style:italic' in content_style:
+                                italic_content = True
+                            if 'font-size:' in content_style:
+                                content_size = int(content_style.split('font-size:')[1].split('px')[0].strip())
+                            if 'text-align:' in content_style:
+                                align_value = content_style.split('text-align:')[1].split(';')[0].strip()
+                                # Map CSS align values to Vietnamese labels
+                                align_map_reverse = {
+                                    'left': 'Trái',
+                                    'right': 'Phải',
+                                    'center': 'Giữa',
+                                    'justify': 'Đều hai bên'
+                                }
+                                content_align = align_map_reverse.get(align_value, 'Trái')
+                        
+                        content_font = st.selectbox("Font chữ nội dung", 
+                                                 ["Arial", "Times New Roman", "Courier New", "Verdana", "Tahoma"],
+                                                 index=["Arial", "Times New Roman", "Courier New", "Verdana", "Tahoma"].index(content_font) if content_font in ["Arial", "Times New Roman", "Courier New", "Verdana", "Tahoma"] else 0,
+                                                 key="content_font_select")
+                    
+                    col_content_style1, col_content_style2, col_content_style3 = st.columns(3)
+                    with col_content_style1:
+                        bold_content = st.checkbox("In đậm nội dung", value=bold_content, key="bold_content_check")
+                    with col_content_style2:
+                        italic_content = st.checkbox("In nghiêng nội dung", value=italic_content, key="italic_content_check")
+                    with col_content_style3:
+                        content_size = st.slider("Cỡ chữ nội dung", min_value=8, max_value=24, value=content_size, key="content_size_slider")
+                    
+                    # Text alignment options
+                    content_align = st.radio("Canh lề nội dung", 
+                                           ["Trái", "Phải", "Giữa", "Đều hai bên"], 
+                                           index=["Trái", "Phải", "Giữa", "Đều hai bên"].index(content_align) if content_align in ["Trái", "Phải", "Giữa", "Đều hai bên"] else 0,
+                                           horizontal=True,
+                                           key="content_align_radio")
+                    
+                    # Main content input
+                    content_order = st.number_input("Thứ tự bài", 
+                                                 min_value=1, 
+                                                 value=st.session_state['edit_content_data']['order_num'] if edit_mode and 'edit_content_data' in st.session_state else 1, 
+                                                 key="content_order_input")
+                    content_text = st.text_area("Nội dung bài Reading*", 
+                                              height=300, 
+                                              value=st.session_state['edit_content_data']['content'] if edit_mode and 'edit_content_data' in st.session_state else '',
+                                              key="content_text_input")
+
+                    # Text-to-Speech Section (chỉ để cấu hình, không tự động tạo)
+                    st.subheader("Cấu hình Text-to-Speech (dành cho khi người dùng nghe sau này)")
+                    col_tts1, col_tts2 = st.columns(2)
+                    
+                    with col_tts1:
+                        tts_language = st.selectbox(
+                            "Ngôn ngữ đọc",
+                            ["en-US", "vi-VN", "fr-FR", "es-ES", "de-DE"],
+                            index=["en-US", "vi-VN", "fr-FR", "es-ES", "de-DE"].index(st.session_state['edit_content_data']['tts_language']) if edit_mode and 'edit_content_data' in st.session_state and st.session_state['edit_content_data']['tts_language'] in ["en-US", "vi-VN", "fr-FR", "es-ES", "de-DE"] else 0,
+                            key="tts_language_select"
+                        )
+                    
+                    with col_tts2:
+                        tts_speed = st.slider(
+                            "Tốc độ đọc",
+                            min_value=0.5,
+                            max_value=2.0,
+                            value=1.0,
+                            step=0.1,
+                            key="tts_speed_slider"
+                        )
+
+                    # Button layout
+                    col_btn1, col_btn2, col_btn3, col_btn4 = st.columns([1, 1, 1, 1])
+                    with col_btn1:
+                        preview_btn = st.form_submit_button("Xem trước")
+                    with col_btn2:
+                        if edit_mode:
+                            submitted = st.form_submit_button("Cập nhật bài Reading")
+                        else:
+                            submitted = st.form_submit_button("Thêm bài Reading")
+                    with col_btn3:
+                        if edit_mode:
+                            if st.form_submit_button("Hủy chỉnh sửa"):
+                                st.session_state['edit_mode'] = False
+                                st.session_state['editing_content_id'] = None
+                                st.session_state.pop('edit_content_data', None)
+                                st.rerun()
+
+                # TTS Preview Button (chỉ để nghe thử, không lưu file)
+                if content_text and st.button("Nghe thử Text-to-Speech", key="tts_preview_button"):
+                    try:
+                        from gtts import gTTS
+                        import io
+                        
+                        # Create temporary audio for preview only
+                        tts = gTTS(
+                            text=content_text, 
+                            lang=tts_language[:2],  # Extract language code
+                            slow=False
+                        )
+                        
+                        audio_bytes = io.BytesIO()
+                        tts.write_to_fp(audio_bytes)
+                        audio_bytes.seek(0)
+                        
+                        # Play audio preview
+                        st.audio(audio_bytes, format='audio/mp3')
+                        
+                    except Exception as e:
+                        st.error(f"Lỗi khi tạo âm thanh: {str(e)}")
+
+                # Preview functionality
+                if preview_btn:
+                    if not content_title or not content_text:
+                        st.error("Vui lòng nhập tiêu đề và nội dung để xem trước")
+                    else:
+                        # Prepare HTML formatting for the title
+                        title_style = []
+                        if bold_title:
+                            title_style.append("font-weight:bold")
+                        if italic_title:
+                            title_style.append("font-style:italic")
+                        title_style.append(f"font-family:{title_font}")
+                        title_style.append(f"font-size:{title_size}px")
+                        
+                        # Prepare HTML formatting for the content
+                        content_style = []
+                        if bold_content:
+                            content_style.append("font-weight:bold")
+                        if italic_content:
+                            content_style.append("font-style:italic")
+                        content_style.append(f"font-family:{content_font}")
+                        content_style.append(f"font-size:{content_size}px")
+                        
+                        # Map alignment options to CSS values
+                        align_map = {
+                            "Trái": "left",
+                            "Phải": "right",
+                            "Giữa": "center",
+                            "Đều hai bên": "justify"
+                        }
+                        content_style.append(f"text-align:{align_map[content_align]}")
+                        
+                        # Preserve line breaks and paragraphs
+                        formatted_content = content_text.replace('\n', '<br>')
+                        
+                        # Display preview
+                        st.markdown("### Xem trước bài Reading")
+                        st.markdown(f"<div style='{'; '.join(title_style)}'>{content_title}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='{'; '.join(content_style)}'>{formatted_content}</div>", unsafe_allow_html=True)
+                        
+                        # Add TTS preview in preview mode
+                        if st.button("Nghe thử trong chế độ xem trước"):
+                            try:
+                                from gtts import gTTS
+                                import io
+                                
+                                tts = gTTS(text=content_text, lang=tts_language[:2], slow=False)
+                                audio_bytes = io.BytesIO()
+                                tts.write_to_fp(audio_bytes)
+                                audio_bytes.seek(0)
+                                st.audio(audio_bytes, format='audio/mp3')
+                            except Exception as e:
+                                st.error(f"Lỗi khi tạo âm thanh xem trước: {str(e)}")
+
+                # Submit functionality
+                if submitted:
+                    if not content_title or not content_text:
+                        st.error("Tiêu đề và nội dung là bắt buộc")
+                    else:
+                        # Define align_map here so it's available for both preview and submission
+                        align_map = {
+                            "Trái": "left",
+                            "Phải": "right",
+                            "Giữa": "center",
+                            "Đều hai bên": "justify"
+                        }
+                        
+                        # Prepare HTML formatting for the title
+                        title_style = []
+                        if bold_title:
+                            title_style.append("font-weight:bold")
+                        if italic_title:
+                            title_style.append("font-style:italic")
+                        title_style.append(f"font-family:{title_font}")
+                        title_style.append(f"font-size:{title_size}px")
+                        
+                        styled_title = f"<div style='{'; '.join(title_style)}'>{content_title}</div>"
+                        
+                        # Prepare HTML formatting for the content
+                        content_style = []
+                        if bold_content:
+                            content_style.append("font-weight:bold")
+                        if italic_content:
+                            content_style.append("font-style:italic")
+                        content_style.append(f"font-family:{content_font}")
+                        content_style.append(f"font-size:{content_size}px")
+                        content_style.append(f"text-align:{align_map[content_align]}")
+                        
+                        formatted_content = content_text.replace('\n', '<br>')
+                        styled_content = f"<div style='{'; '.join(content_style)}'>{formatted_content}</div>"
+                        
+                        # Xác định đường dẫn hình ảnh và âm thanh cuối cùng
+                        final_image_path = image_path if image_path else (st.session_state['edit_content_data']['image_url'] if edit_mode and 'edit_content_data' in st.session_state else None)
+                        final_audio_path = audio_path if audio_path else (st.session_state['edit_content_data']['audio_url'] if edit_mode and 'edit_content_data' in st.session_state else None)
+                        
+                        # Save to database
+                        cursor = conn.cursor()
+                        if edit_mode and editing_content_id:
+                            # Cập nhật bài reading hiện có
+                            cursor.execute(
+                                """UPDATE reading_contents 
+                                SET title = ?, content = ?, image_url = ?, audio_url = ?, order_num = ?, tts_language = ?
+                                WHERE id = ?""", 
+                                (styled_title, styled_content, 
+                                 final_image_path, final_audio_path, content_order, tts_language,
+                                 editing_content_id)
+                            )
+                            conn.commit()
+                            st.success("Đã cập nhật bài Reading!")
+                        else:
+                            # Thêm bài reading mới
+                            cursor.execute(
+                                """INSERT INTO reading_contents 
+                                (chapter_id, title, content, image_url, audio_url, order_num, tts_language) 
+                                VALUES (?, ?, ?, ?, ?, ?, ?)""", 
+                                (selected_chapter_id[0], styled_title, styled_content, 
+                                 final_image_path, final_audio_path, content_order, tts_language)
+                            )
+                            conn.commit()
+                            st.success("Đã thêm bài Reading mới!")
+                        
+                        # Reset chế độ chỉnh sửa
+                        if edit_mode:
+                            st.session_state['edit_mode'] = False
+                            st.session_state['editing_content_id'] = None
+                            st.session_state.pop('edit_content_data', None)
+                        
+                        st.rerun()
+
+        conn.close()
+
+
+    
+    # TAB 4: QUẢN LÝ CÂU HỎI
+    # TAB 4: QUẢN LÝ CÂU HỎI
+    with tab4:  # TAB Quản lý câu hỏi
+        st.subheader("Quản lý câu hỏi")
+        
+        # Kết nối database
+        conn = get_connection()
+        
+        # Lấy danh sách chủ đề (topics)
+        topics = conn.execute("SELECT id, title FROM reading_topics ORDER BY created_at").fetchall()
+        
+        if not topics:
+            st.warning("Chưa có chủ đề nào. Vui lòng tạo chủ đề trước.")
+            conn.close()
+            st.stop()
+        
+        topic_names = [topic[1] for topic in topics]
+        topic_ids = [topic[0] for topic in topics]
+        
+        # Chọn chủ đề
+        selected_topic_name = st.selectbox("Chọn chủ đề", topic_names)
+        selected_topic_id = topic_ids[topic_names.index(selected_topic_name)]
+        
+        # Lấy danh sách chương thuộc chủ đề đã chọn
+        chapters = conn.execute("""
+            SELECT id, title FROM reading_chapters 
+            WHERE topic_id = ?
+            ORDER BY order_num
+        """, (selected_topic_id,)).fetchall()
+        
+        if not chapters:
+            st.warning("Chủ đề này chưa có chương nào. Vui lòng tạo chương trước.")
+            conn.close()
+            st.stop()
+        
+        chapter_names = [chapter[1] for chapter in chapters]
+        chapter_ids = [chapter[0] for chapter in chapters]
+        
+        # Chọn chương
+        selected_chapter_name = st.selectbox("Chọn chương", chapter_names)
+        selected_chapter_id = chapter_ids[chapter_names.index(selected_chapter_name)]
+        
+        # Lấy danh sách bài Reading thuộc chương đã chọn
+        contents = conn.execute("""
+            SELECT id, title FROM reading_contents 
+            WHERE chapter_id = ?
+            ORDER BY order_num
+        """, (selected_chapter_id,)).fetchall()
+        
+        if not contents:
+            st.warning("Chương này chưa có bài Reading nào. Vui lòng tạo bài Reading trước.")
+            conn.close()
+            st.stop()
+        
+        # Hàm loại bỏ HTML tags
+        def clean_html(text):
+            import re
+            return re.sub(r'<[^>]*>', '', text) if text else ''
+        
+        # Chọn bài Reading với tiêu đề đã được làm sạch
+        selected_content = st.selectbox(
+            "Chọn bài Reading", 
+            contents, 
+            format_func=lambda x: clean_html(x[1]),  # Loại bỏ HTML tags khi hiển thị
+            key="question_content_select"
+        )
+        
+        selected_content_id = (selected_content[0], selected_content[1]) if selected_content else None
+        
+        if selected_content_id:
+            # THÊM FORM IMPORT TỪ CSV
+            st.subheader("Import câu hỏi từ CSV")
+            with st.expander("Hướng dẫn import từ CSV"):
+                st.write("""
+                **Cấu trúc file CSV:**
+                - File CSV cần có các cột sau (theo đúng thứ tự):
+                    1. question_type: Loại câu hỏi (multiple_choice, true_false, fill_in_blank)
+                    2. question_text: Nội dung câu hỏi
+                    3. options: Các lựa chọn (chỉ dành cho loại multiple_choice)
+                        - Các lựa chọn cách nhau bằng dấu |
+                        - VD: Option 1|Option 2|Option 3
+                    4. correct_answer: Đáp án đúng
+                        - Với multiple_choice: điền nội dung đáp án đúng
+                        - Với true_false: điền True hoặc False
+                        - Với fill_in_blank: điền từ cần điền
+                    5. points: Điểm số (số nguyên)
+                
+                **Ví dụ file CSV:**
+                ```
+                multiple_choice,"What is 1+1?","1|2|3|4",2,1
+                true_false,"The sky is blue",,True,1
+                fill_in_blank,"The capital of Vietnam is ___",,Hanoi,1
+                ```
+                """)
+                
+                # Tạo template CSV mẫu
+                template_data = [
+                    ["multiple_choice", "What is 1+1?", "1|2|3|4", "2", "1"],
+                    ["true_false", "The sky is blue", "", "True", "1"],
+                    ["fill_in_blank", "The capital of Vietnam is ___", "", "Hanoi", "1"]
+                ]
+                
+                # Chuyển thành CSV
+                import csv
+                from io import StringIO
+                
+                csv_buffer = StringIO()
+                writer = csv.writer(csv_buffer)
+                writer.writerow(["question_type", "question_text", "options", "correct_answer", "points"])
+                writer.writerows(template_data)
+                
+                # Tạo nút tải về
+                st.download_button(
+                    label="Tải template mẫu",
+                    data=csv_buffer.getvalue(),
+                    file_name="question_template.csv",
+                    mime="text/csv",
+                    help="Tải về template CSV mẫu để nhập liệu"
+                )
+            
+            uploaded_file = st.file_uploader("Chọn file CSV", type=["csv"])
+            
+            if uploaded_file is not None:
+                try:
+                    import pandas as pd
+                    import io
+                    
+                    # Đọc file CSV
+                    df = pd.read_csv(io.StringIO(uploaded_file.getvalue().decode("utf-8")), 
+                                     header=None,
+                                     names=["question_type", "question_text", "options", "correct_answer", "points"])
+                    
+                    st.write("Dữ liệu từ file CSV:")
+                    st.dataframe(df)
+                    
+                    if st.button("Import câu hỏi"):
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        success_count = 0
+                        error_count = 0
+                        
+                        for _, row in df.iterrows():
+                            try:
+                                question_type = row["question_type"]
+                                question_text = row["question_text"]
+                                correct_answer = str(row["correct_answer"])
+                                points = int(row["points"])
+                                
+                                # Xử lý options tùy theo loại câu hỏi
+                                options = None
+                                if question_type == "multiple_choice":
+                                    if pd.isna(row["options"]):
+                                        raise ValueError("Missing options for multiple choice question")
+                                    options = json.dumps([opt.strip() for opt in row["options"].split("|") if opt.strip()])
+                                
+                                # Thêm vào database
+                                cursor.execute("""
+                                    INSERT INTO reading_questions 
+                                    (content_id, question_type, question_text, options, correct_answer, points)
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                """, (selected_content_id[0], question_type, question_text, options, correct_answer, points))
+                                
+                                success_count += 1
+                            except Exception as e:
+                                error_count += 1
+                                st.error(f"Lỗi khi import câu hỏi: {str(e)}")
+                        
+                        conn.commit()
+                        conn.close()
+                        
+                        st.success(f"Import hoàn tất! Thành công: {success_count}, Lỗi: {error_count}")
+                        st.rerun()
+                        
+                except Exception as e:
+                    st.error(f"Lỗi khi đọc file CSV: {str(e)}")
+            # FORM THÊM CÂU HỎI
+            with st.form(key="add_question_form"):
+                question_type = st.selectbox(
+                    "Loại câu hỏi*", 
+                    ["multiple_choice", "true_false", "fill_in_blank"], 
+                    format_func=lambda x: {"multiple_choice": "Trắc nghiệm", 
+                                           "true_false": "Đúng/Sai", 
+                                           "fill_in_blank": "Điền từ"}[x],
+                    key="question_type_select"
+                )
+                
+                question_text = st.text_area("Nội dung câu hỏi*", key="question_text_input")
+                points = st.number_input("Điểm số", min_value=1, value=1, key="points_input")
+                
+                # Khai báo biến lưu options và cờ để hiển thị chọn đáp án đúng
+                if "temp_options" not in st.session_state:
+                    st.session_state.temp_options = []
+                if "show_correct_answer" not in st.session_state:
+                    st.session_state.show_correct_answer = False
+
+                if question_type == "multiple_choice":
+                    options = st.text_area(
+                        "Các lựa chọn (mỗi lựa chọn trên 1 dòng)*", 
+                        help="Mỗi lựa chọn nhập trên 1 dòng riêng", 
+                        key="options_input"
+                    )
+                    
+                    # Nút lấy đáp án để "xác nhận" options
+                    get_answer_btn = st.form_submit_button("Lấy đáp án")
+                    if get_answer_btn:
+                        st.session_state.temp_options = [opt.strip() for opt in options.split('\n') if opt.strip()]
+                        if len(st.session_state.temp_options) < 2:
+                            st.error("Cần ít nhất 2 lựa chọn để chọn đáp án đúng")
+                            st.session_state.show_correct_answer = False
+                        else:
+                            st.session_state.show_correct_answer = True
+                    
+                    # Nếu đã xác nhận thì hiện phần chọn đáp án đúng
+                    if st.session_state.show_correct_answer:
+                        correct_answer = st.radio(
+                            "Chọn đáp án đúng:", 
+                            st.session_state.temp_options,
+                            key="correct_answer_radio"
+                        )
+                    else:
+                        correct_answer = None
+
+                elif question_type == "true_false":
+                    correct_answer = st.radio("Đáp án đúng*", ["True", "False"], key="correct_answer_truefalse")
+                    
+                elif question_type == "fill_in_blank":
+                    correct_answer = st.text_input("Đáp án đúng*", key="correct_answer_fillblank")
+                
+                # Nút Thêm câu hỏi, chỉ hoạt động khi đã có đáp án đúng
+                submitted = st.form_submit_button("Thêm câu hỏi")
+                
+                if submitted:
+                    if not question_text.strip():
+                        st.error("Nội dung câu hỏi là bắt buộc")
+                    elif question_type == "multiple_choice":
+                        if not st.session_state.show_correct_answer:
+                            st.error("Vui lòng bấm 'Lấy đáp án' và chọn đáp án đúng")
+                        elif correct_answer is None:
+                            st.error("Vui lòng chọn đáp án đúng")
+                        else:
+                            options_json = json.dumps(st.session_state.temp_options)
+                            try:
+                                conn = get_connection()
+                                cursor = conn.cursor()
+                                cursor.execute("""
+                                    INSERT INTO reading_questions 
+                                    (content_id, question_type, question_text, options, correct_answer, points)
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                """, (selected_content_id[0], question_type, question_text, options_json, correct_answer, points))
+                                conn.commit()
+                                st.success("Đã thêm câu hỏi thành công!")
+                                # Reset trạng thái
+                                st.session_state.temp_options = []
+                                st.session_state.show_correct_answer = False
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Lỗi: {str(e)}")
+                            finally:
+                                conn.close()
+
+                    elif question_type == "true_false":
+                        if correct_answer not in ["True", "False"]:
+                            st.error("Vui lòng chọn đáp án đúng")
+                        else:
+                            try:
+                                conn = get_connection()
+                                cursor = conn.cursor()
+                                cursor.execute("""
+                                    INSERT INTO reading_questions 
+                                    (content_id, question_type, question_text, options, correct_answer, points)
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                """, (selected_content_id[0], question_type, question_text, None, correct_answer, points))
+                                conn.commit()
+                                st.success("Đã thêm câu hỏi thành công!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Lỗi: {str(e)}")
+                            finally:
+                                conn.close()
+
+                    elif question_type == "fill_in_blank":
+                        if not correct_answer.strip():
+                            st.error("Vui lòng nhập đáp án đúng")
+                        else:
+                            try:
+                                conn = get_connection()
+                                cursor = conn.cursor()
+                                cursor.execute("""
+                                    INSERT INTO reading_questions 
+                                    (content_id, question_type, question_text, options, correct_answer, points)
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                """, (selected_content_id[0], question_type, question_text, None, correct_answer.strip(), points))
+                                conn.commit()
+                                st.success("Đã thêm câu hỏi thành công!")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Lỗi: {str(e)}")
+                            finally:
+                                conn.close()
+            
+            # HIỂN THỊ CÂU HỎI HIỆN CÓ (phần này không cần form)
+            # Lấy tiêu đề đã được làm sạch (loại bỏ HTML tags)
+            clean_title = re.sub(r'<[^>]*>', '', selected_content_id[1]) if selected_content_id[1] else ''
+
+            st.subheader(f"Câu hỏi thuộc bài: {clean_title}")
+            conn = get_connection()
+            questions = conn.execute("""
+                SELECT id, question_type, question_text, options, correct_answer, points 
+                FROM reading_questions 
+                WHERE content_id = ?
+                ORDER BY id
+            """, (selected_content_id[0],)).fetchall()
+            conn.close()
+            
+            if not questions:
+                st.info("Bài Reading này chưa có câu hỏi nào")
+            else:
+                for q in questions:
+                    with st.expander(f"Câu hỏi #{q[0]} ({q[5]} điểm)"):
+                        st.write(f"**Loại:** {q[1]}")
+                        st.write(f"**Nội dung:** {q[2]}")
+                        
+                        if q[1] == "multiple_choice":
+                            st.write("**Lựa chọn:**")
+                            options = json.loads(q[3]) if q[3] else []
+                            for opt in options:
+                                st.write(f"- {opt}")
+                        
+                        st.write(f"**Đáp án đúng:** {q[4]}")
+                        
+                        if st.button(f"Xóa câu hỏi #{q[0]}", key=f"del_q_{q[0]}"):
+                            conn = get_connection()
+                            conn.execute("DELETE FROM reading_questions WHERE id = ?", (q[0],))
+                            conn.commit()
+                            conn.close()
+                            st.success("Đã xóa câu hỏi!")
+                            st.rerun()
+        else:
+            st.warning("Vui lòng chọn 1 bài Reading trước khi quản lý câu hỏi")
+
+
+# ==============================================
+# PHẦN NGƯỜI DÙNG - PRACTICE READING
+elif option == "📄 Reading" and st.session_state.user['role'] != 'admin':
+    st.title("📄 Reading Practice")
+
+    question_types = {
+        "multiple_choice": "Trắc nghiệm",
+        "true_false": "Đúng/Sai",
+        "fill_in_blank": "Điền từ"
+    }
+
+    if 'current_content' not in st.session_state:
+        st.session_state.current_content = None
+    if 'show_questions' not in st.session_state:
+        st.session_state.show_questions = False
+    if 'show_results' not in st.session_state:
+        st.session_state.show_results = False
+
+    conn = get_connection()
+    user_id = st.session_state.user['id']
+
+    topics = conn.execute("SELECT id, title FROM reading_topics ORDER BY title").fetchall()
+
+    progress = conn.execute("""
+        SELECT COUNT(DISTINCT content_id) 
+        FROM user_reading_progress 
+        WHERE user_id = ? AND is_completed = 1
+    """, (user_id,)).fetchone()[0]
+    total_contents = conn.execute("SELECT COUNT(*) FROM reading_contents").fetchone()[0]
+
+    st.write(f"**Tiến độ của bạn:** Đã hoàn thành {progress}/{total_contents} bài ({progress/total_contents*100:.1f}%)")
+
+    selected_topic_id = st.selectbox(
+        "Chọn chủ đề",
+        topics,
+        format_func=lambda x: x[1],
+        key="user_topic_select"
+    )
+
+    if selected_topic_id:
+        chapters = conn.execute("""
+            SELECT id, title FROM reading_chapters 
+            WHERE topic_id = ? ORDER BY order_num
+        """, (selected_topic_id[0],)).fetchall()
+
+        selected_chapter_id = st.selectbox(
+            "Chọn chương",
+            chapters,
+            format_func=lambda x: x[1],
+            key="user_chapter_select"
+        )
+
+        if selected_chapter_id:
+            contents = conn.execute("""
+                SELECT rc.id, rc.title, urp.score, urp.is_completed 
+                FROM reading_contents rc
+                LEFT JOIN user_reading_progress urp ON rc.id = urp.content_id AND urp.user_id = ?
+                WHERE rc.chapter_id = ? 
+                ORDER BY rc.order_num
+            """, (user_id, selected_chapter_id[0])).fetchall()
+
+            selected_content_id = st.selectbox(
+                "Chọn bài Reading",
+                contents,
+                format_func=lambda x: f"{re.sub(r'<[^>]*>', '', x[1])} {'✅' if x[3] else ''}",
+                key="user_content_select"
+            )
+
+            if selected_content_id and (not st.session_state.current_content or
+                                      st.session_state.current_content[0] != selected_content_id[0]):
+                st.session_state.current_content = selected_content_id
+                st.session_state.show_questions = True
+                st.session_state.show_results = False
+                st.rerun()
+
+            if selected_content_id and st.session_state.show_questions:
+                content = conn.execute("""
+                    SELECT rc.title, rc.content, rc.image_url, rc.audio_url, rc.tts_language,
+                           urp.score, urp.is_completed
+                    FROM reading_contents rc
+                    LEFT JOIN user_reading_progress urp ON rc.id = urp.content_id 
+                        AND urp.user_id = ?
+                    WHERE rc.id = ?
+                """, (user_id, selected_content_id[0])).fetchone()
+
+                # Display title (already contains HTML formatting)
+                from bs4 import BeautifulSoup
+                title = BeautifulSoup(content[0], 'html.parser').get_text()
+                st.markdown(f"## {title}")
+
+                # TTS Controls
+                with st.expander("🔊 Text-to-Speech Options", expanded=False):
+                    col1, col2, col3 = st.columns([2, 2, 1])
+                    
+                    with col1:
+                        tts_language = st.selectbox(
+                            "Ngôn ngữ",
+                            ["vi-VN", "en-US", "fr-FR", "es-ES", "de-DE"],
+                            index=["vi-VN", "en-US", "fr-FR", "es-ES", "de-DE"].index(content[4]) if content[4] else 0,
+                            key="user_tts_language"
+                        )
+                    
+                    with col2:
+                        tts_speed = st.slider(
+                            "Tốc độ",
+                            min_value=0.5,
+                            max_value=2.0,
+                            value=1.0,
+                            step=0.1,
+                            key="user_tts_speed"
+                        )
+                    
+                    with col3:
+                        st.markdown("<div style='height:30px'></div>", unsafe_allow_html=True)
+                        if st.button("Phát toàn bộ bài đọc", key="play_full_reading"):
+                            try:
+                                from gtts import gTTS
+                                import io
+                                
+                                # Extract clean text from HTML content
+                                clean_content = BeautifulSoup(content[1], 'html.parser').get_text()
+                                
+                                tts = gTTS(
+                                    text=clean_content,
+                                    lang=tts_language[:2],
+                                    slow=False
+                                )
+                                
+                                audio_bytes = io.BytesIO()
+                                tts.write_to_fp(audio_bytes)
+                                audio_bytes.seek(0)
+                                
+                                st.session_state.tts_audio = audio_bytes
+                                st.rerun()
+                            
+                            except Exception as e:
+                                st.error(f"Lỗi khi tạo âm thanh: {str(e)}")
+
+                # Play audio if available
+                if 'tts_audio' in st.session_state:
+                    st.audio(st.session_state.tts_audio, format='audio/mp3')
+
+                if content[5]:  # is_completed
+                    st.success(f"✅ Bạn đã hoàn thành bài này với điểm số: {content[5]:.1f}%")
+                else:
+                    # Checkbox để ẩn hiện nội dung script
+                    hide_script = st.checkbox("Hide script", value=False)
+
+                    # Nếu chưa được chọn thì hiển thị nội dung
+                    if not hide_script:
+                        st.markdown(content[1], unsafe_allow_html=True)
+
+                    # Add paragraph-by-paragraph TTS
+                    # paragraphs = [p for p in BeautifulSoup(content[1], 'html.parser').find_all(['p', 'div']) if p.get_text().strip()]
+                    # for i, p in enumerate(paragraphs):
+                    #     st.markdown(str(p), unsafe_allow_html=True)
+                    #     if st.button("🔊", key=f"play_para_{i}"):
+                    #         try:
+                    #             from gtts import gTTS
+                    #             import io
+                    #             
+                    #             tts = gTTS(
+                    #                 text=p.get_text(),
+                    #                 lang=tts_language[:2],
+                    #                 slow=False
+                    #             )
+                    #             
+                    #             audio_bytes = io.BytesIO()
+                    #             tts.write_to_fp(audio_bytes)
+                    #             audio_bytes.seek(0)
+                    #             
+                    #             st.session_state.current_para_audio = audio_bytes
+                    #             st.rerun()
+                    #         except Exception as e:
+                    #             st.error(f"Lỗi khi đọc đoạn văn: {str(e)}")
+
+
+                    if 'current_para_audio' in st.session_state:
+                        st.audio(st.session_state.current_para_audio, format='audio/mp3')
+
+                    # Hiển thị ảnh full width
+                    if content[2]:  # image_url
+                        try:
+                            if content[2].startswith(('http://', 'https://')):
+                                st.image(content[2], 
+                                        caption="Hình minh họa", 
+                                        use_container_width=True,
+                                        output_format="auto")
+                            else:
+                                if os.path.exists(content[2]):
+                                    st.image(content[2], 
+                                            caption="Hình minh họa", 
+                                            use_container_width=True,
+                                            output_format="auto")
+                                else:
+                                    st.warning("Không tìm thấy file hình ảnh")
+                        except Exception as e:
+                            st.error(f"Lỗi khi hiển thị hình ảnh: {str(e)}")
+
+                    # Audio vẫn giữ nguyên trong cột nếu cần
+                    if content[3]:  # audio_url
+                        try:
+                            if content[3].startswith(('http://', 'https://')):
+                                st.audio(content[3], format="audio/mp3")
+                            else:
+                                if os.path.exists(content[3]):
+                                    st.audio(content[3], format="audio/mp3")
+                                else:
+                                    st.warning("Không tìm thấy file âm thanh")
+                        except Exception as e:
+                            st.error(f"Lỗi khi hiển thị âm thanh: {str(e)}")
+
+                    questions = conn.execute("""
+                        SELECT id, question_type, question_text, options, correct_answer, points
+                        FROM reading_questions 
+                        WHERE content_id = ?
+                        ORDER BY id
+                    """, (selected_content_id[0],)).fetchall()
+
+                    if questions:
+                        with st.form("reading_test_form", clear_on_submit=True):
+                            st.divider()
+                            st.subheader("Phần Câu Hỏi")
+                            st.write(f"Trả lời các câu hỏi sau ({len(questions)} câu, tổng {sum(q[5] for q in questions)} điểm):")
+
+                            user_answers = {}
+
+                            for i, q in enumerate(questions, 1):
+                                st.markdown(f"**Câu {i}:** ({question_types[q[1]]}, {q[5]} điểm)")
+                                st.write(q[2])
+
+                                # Add TTS for questions
+                                with st.expander("🔊 Nghe câu hỏi", expanded=False):
+                                    if st.button("Phát câu hỏi", key=f"play_question_{q[0]}"):
+                                        try:
+                                            from gtts import gTTS
+                                            import io
+                                            
+                                            tts = gTTS(
+                                                text=q[2],
+                                                lang=tts_language[:2],
+                                                slow=False
+                                            )
+                                            
+                                            audio_bytes = io.BytesIO()
+                                            tts.write_to_fp(audio_bytes)
+                                            audio_bytes.seek(0)
+                                            
+                                            st.session_state[f"question_audio_{q[0]}"] = audio_bytes
+                                            st.rerun()
+                                        
+                                        except Exception as e:
+                                            st.error(f"Lỗi khi đọc câu hỏi: {str(e)}")
+
+                                    if f"question_audio_{q[0]}" in st.session_state:
+                                        st.audio(st.session_state[f"question_audio_{q[0]}"], format='audio/mp3')
+
+                                if q[1] == "multiple_choice":
+                                    options = json.loads(q[3]) if q[3] else []
+                                    selected_option = st.radio(
+                                        "Lựa chọn:",
+                                        options,
+                                        key=f"q_{q[0]}_options_{selected_content_id[0]}",
+                                        index=None
+                                    )
+                                    user_answers[q[0]] = selected_option
+
+                                elif q[1] == "true_false":
+                                    user_answers[q[0]] = st.radio(
+                                        "Chọn:",
+                                        ["Đúng", "Sai"],
+                                        key=f"q_{q[0]}_truefalse_{selected_content_id[0]}",
+                                        index=None
+                                    )
+                                else:
+                                    user_answers[q[0]] = st.text_input(
+                                        "Điền câu trả lời:",
+                                        key=f"q_{q[0]}_fillblank_{selected_content_id[0]}"
+                                    )
+
+                                st.write("---")
+
+                            submitted = st.form_submit_button("📤 Nộp Bài", type="primary")
+
+                        if submitted:
+                            if None in user_answers.values() or "" in user_answers.values():
+                                st.warning("Vui lòng trả lời tất cả câu hỏi trước khi nộp bài")
+                                st.stop()
+
+                            results = []
+                            correct_count = 0
+                            total_points = sum(q[5] for q in questions)
+                            earned_points = 0
+
+                            for q in questions:
+                                user_answer = user_answers.get(q[0], "")
+                                correct_answer = q[4]
+                                if q[1] == "true_false":
+                                    user_answer = "True" if user_answer == "Đúng" else "False"
+
+                                is_correct = str(user_answer).strip().lower() == str(correct_answer).strip().lower()
+                                if is_correct:
+                                    correct_count += 1
+                                    earned_points += q[5]
+
+                                results.append({
+                                    "question": q[2],
+                                    "type": q[1],
+                                    "your_answer": user_answer,
+                                    "correct_answer": correct_answer,
+                                    "is_correct": is_correct,
+                                    "points": q[5],
+                                    "earned": q[5] if is_correct else 0
+                                })
+
+                            score = (earned_points / total_points) * 100
+                            is_completed = score >= 90
+
+                            st.session_state.show_results = True
+                            st.session_state.results = {
+                                "score": score,
+                                "correct_count": correct_count,
+                                "total_questions": len(questions),
+                                "is_completed": is_completed,
+                                "details": results,
+                                "content_id": selected_content_id[0],
+                                "content_title": content[0]
+                            }
+
+                            try:
+                                cursor = conn.cursor()
+                                cursor.execute("""
+                                    INSERT OR REPLACE INTO user_reading_progress 
+                                    (user_id, content_id, score, is_completed, completed_at)
+                                    VALUES (?, ?, ?, ?, ?)
+                                """, (
+                                    user_id,
+                                    selected_content_id[0],
+                                    score,
+                                    is_completed,
+                                    datetime.now() if is_completed else None
+                                ))
+
+                                if is_completed:
+                                    cursor.execute("""
+                                        UPDATE users SET stickers = stickers + 1 
+                                        WHERE id = ? AND (
+                                            SELECT COUNT(*) FROM user_reading_progress 
+                                            WHERE user_id = ? AND content_id = ? AND is_completed = 1
+                                        ) = 0
+                                    """, (user_id, user_id, selected_content_id[0]))
+                                    st.session_state.user['stickers'] = conn.execute("""
+                                        SELECT stickers FROM users WHERE id = ?
+                                    """, (user_id,)).fetchone()[0]
+
+                                conn.commit()
+                            except Exception as e:
+                                st.error(f"Có lỗi khi lưu kết quả: {str(e)}")
+                            finally:
+                                conn.close()
+                            st.rerun()
+                    else:
+                        st.warning("📝 Bài Reading này hiện chưa có câu hỏi đi kèm")
+                        conn.close()
+
+    if st.session_state.show_results:
+        results = st.session_state.results
+
+        st.subheader(f"Kết quả bài: {results['content_title']}")
+        st.divider()
+        st.subheader("📊 Kết Quả Bài Làm")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Điểm số", f"{results['score']:.1f}%")
+        with col2:
+            st.metric("Số câu đúng", f"{results['correct_count']}/{results['total_questions']}")
+        with col3:
+            st.metric("Trạng thái", "✅ Hoàn thành" if results['is_completed'] else "❌ Chưa đạt")
+                       
+                            
     
     conn.close()                          
 
