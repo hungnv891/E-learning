@@ -5848,6 +5848,29 @@ if option == "📄 Reading" and st.session_state.user['role'] == 'admin':
             )
 
             if selected_chapter_id:
+                # --- THÊM NÚT XÓA TOÀN BỘ BÀI READING TRONG CHƯƠNG ---
+                if st.button("⚠️ Xóa toàn bộ bài Reading trong chương này", type="primary"):
+                    # Hiển thị hộp thoại xác nhận
+                    confirm = st.checkbox("Tôi chắc chắn muốn xóa toàn bộ bài Reading trong chương này")
+                    if confirm:
+                        # Lấy số lượng bài reading sẽ bị xóa
+                        count = conn.execute(
+                            "SELECT COUNT(*) FROM reading_contents WHERE chapter_id = ?",
+                            (selected_chapter_id[0],)
+                        ).fetchone()[0]
+                        
+                        if count > 0:
+                            # Thực hiện xóa
+                            conn.execute(
+                                "DELETE FROM reading_contents WHERE chapter_id = ?",
+                                (selected_chapter_id[0],)
+                            )
+                            conn.commit()
+                            st.success(f"Đã xóa {count} bài Reading trong chương này!")
+                            st.rerun()
+                        else:
+                            st.warning("Không có bài Reading nào để xóa trong chương này")
+                
                 # --- THÊM NÚT IMPORT TỪ CSV VÀ TẢI TEMPLATE ---
                 with st.expander("Import bài Reading từ CSV"):
                     col1, col2 = st.columns([1, 1])
@@ -6805,7 +6828,11 @@ elif option == "📄 Reading" and st.session_state.user['role'] != 'admin':
 
     conn = get_connection()
     user_id = st.session_state.user['id']
+    
+    # Thêm ô tìm kiếm
+    search_query = st.text_input("🔍 Tìm kiếm bài Reading theo tiêu đề", "")
 
+    # Lấy danh sách topics
     topics = conn.execute("SELECT id, title FROM reading_topics ORDER BY title").fetchall()
 
     progress = conn.execute("""
@@ -6817,14 +6844,62 @@ elif option == "📄 Reading" and st.session_state.user['role'] != 'admin':
 
     st.write(f"**Tiến độ của bạn:** Đã hoàn thành {progress}/{total_contents} bài ({progress/total_contents*100:.1f}%)")
 
-    selected_topic_id = st.selectbox(
-        "Chọn chủ đề",
-        topics,
-        format_func=lambda x: x[1],
-        key="user_topic_select"
-    )
+    # Nếu có từ khóa tìm kiếm, hiển thị kết quả tìm kiếm
+    if search_query:
+        st.subheader(f"Kết quả tìm kiếm cho: '{search_query}'")
+        search_results = conn.execute("""
+            SELECT rc.id, rc.title, rt.title as topic_title, rc.chapter_id, 
+                   urp.score, urp.is_completed
+            FROM reading_contents rc
+            JOIN reading_chapters rch ON rc.chapter_id = rch.id
+            JOIN reading_topics rt ON rch.topic_id = rt.id
+            LEFT JOIN user_reading_progress urp ON rc.id = urp.content_id AND urp.user_id = ?
+            WHERE rc.title LIKE ? 
+            ORDER BY rt.title, rch.title, rc.title
+        """, (user_id, f"%{search_query}%")).fetchall()
 
-    if selected_topic_id:
+        if search_results:
+            # Tạo selectbox với kết quả tìm kiếm
+            selected_search_result = st.selectbox(
+                "Chọn bài Reading từ kết quả tìm kiếm",
+                search_results,
+                format_func=lambda x: f"{x[2]} - {re.sub(r'<[^>]*>', '', x[1])} {'✅' if x[5] else ''}",
+                key="user_search_content_select"
+            )
+
+            if selected_search_result:
+                # Lấy thông tin chapter và topic từ kết quả tìm kiếm
+                chapter_info = conn.execute("""
+                    SELECT id, title, topic_id FROM reading_chapters 
+                    WHERE id = ?
+                """, (selected_search_result[3],)).fetchone()
+
+                # Cập nhật selected_topic_id và selected_chapter_id
+                selected_topic_id = (chapter_info[2], "")
+                selected_chapter_id = (chapter_info[0], chapter_info[1])
+                
+                # Tìm content tương ứng trong kết quả tìm kiếm
+                selected_content_id = (selected_search_result[0], selected_search_result[1], 
+                                     selected_search_result[4], selected_search_result[5])
+                
+                if selected_content_id and (not st.session_state.current_content or
+                                          st.session_state.current_content[0] != selected_content_id[0]):
+                    st.session_state.current_content = selected_content_id
+                    st.session_state.show_questions = True
+                    st.session_state.show_results = False
+                    st.rerun()
+        else:
+            st.warning("Không tìm thấy bài Reading nào phù hợp")
+            selected_topic_id = None
+    else:
+        selected_topic_id = st.selectbox(
+            "Chọn chủ đề",
+            topics,
+            format_func=lambda x: x[1],
+            key="user_topic_select"
+        )
+
+    if selected_topic_id and not search_query:
         chapters = conn.execute("""
             SELECT id, title FROM reading_chapters 
             WHERE topic_id = ? ORDER BY order_num
@@ -6860,295 +6935,296 @@ elif option == "📄 Reading" and st.session_state.user['role'] != 'admin':
                 st.session_state.show_results = False
                 st.rerun()
 
-            if selected_content_id and st.session_state.show_questions:
-                content = conn.execute("""
-                    SELECT rc.title, rc.content, rc.image_url, rc.audio_url, rc.tts_language,
-                           urp.score, urp.is_completed
-                    FROM reading_contents rc
-                    LEFT JOIN user_reading_progress urp ON rc.id = urp.content_id 
-                        AND urp.user_id = ?
-                    WHERE rc.id = ?
-                """, (user_id, selected_content_id[0])).fetchone()
+    if ('current_content' in st.session_state and st.session_state.current_content and 
+        st.session_state.show_questions):
+        content = conn.execute("""
+            SELECT rc.title, rc.content, rc.image_url, rc.audio_url, rc.tts_language,
+                   urp.score, urp.is_completed
+            FROM reading_contents rc
+            LEFT JOIN user_reading_progress urp ON rc.id = urp.content_id 
+                AND urp.user_id = ?
+            WHERE rc.id = ?
+        """, (user_id, st.session_state.current_content[0])).fetchone()
 
-                # Display title (already contains HTML formatting)
-                from bs4 import BeautifulSoup
-                title = BeautifulSoup(content[0], 'html.parser').get_text()
-                st.markdown(f"## {title}")
+        # Display title (already contains HTML formatting)
+        from bs4 import BeautifulSoup
+        title = BeautifulSoup(content[0], 'html.parser').get_text()
+        st.markdown(f"## {title}")
 
-                # TTS Controls
-                with st.expander("🔊 Text-to-Speech Options", expanded=False):
-                    col1, col2, col3 = st.columns([2, 2, 1])
-                    
-                    with col1:
-                        tts_language = st.selectbox(
-                            "Ngôn ngữ",
-                            ["vi-VN", "en-US", "fr-FR", "es-ES", "de-DE"],
-                            index=["vi-VN", "en-US", "fr-FR", "es-ES", "de-DE"].index(content[4]) if content[4] else 0,
-                            key="user_tts_language"
+        # TTS Controls
+        with st.expander("🔊 Text-to-Speech Options", expanded=False):
+            col1, col2, col3 = st.columns([2, 2, 1])
+            
+            with col1:
+                tts_language = st.selectbox(
+                    "Ngôn ngữ",
+                    ["vi-VN", "en-US", "fr-FR", "es-ES", "de-DE"],
+                    index=["vi-VN", "en-US", "fr-FR", "es-ES", "de-DE"].index(content[4]) if content[4] else 0,
+                    key="user_tts_language"
+                )
+            
+            with col2:
+                tts_speed = st.slider(
+                    "Tốc độ",
+                    min_value=0.5,
+                    max_value=2.0,
+                    value=1.0,
+                    step=0.1,
+                    key="user_tts_speed"
+                )
+            
+            with col3:
+                st.markdown("<div style='height:30px'></div>", unsafe_allow_html=True)
+                if st.button("Phát toàn bộ bài đọc", key="play_full_reading"):
+                    try:
+                        from gtts import gTTS
+                        import io
+                        
+                        # Extract clean text from HTML content
+                        clean_content = BeautifulSoup(content[1], 'html.parser').get_text()
+                        
+                        tts = gTTS(
+                            text=clean_content,
+                            lang=tts_language[:2],
+                            slow=False
                         )
+                        
+                        audio_bytes = io.BytesIO()
+                        tts.write_to_fp(audio_bytes)
+                        audio_bytes.seek(0)
+                        
+                        st.session_state.tts_audio = audio_bytes
+                        st.rerun()
                     
-                    with col2:
-                        tts_speed = st.slider(
-                            "Tốc độ",
-                            min_value=0.5,
-                            max_value=2.0,
-                            value=1.0,
-                            step=0.1,
-                            key="user_tts_speed"
-                        )
-                    
-                    with col3:
-                        st.markdown("<div style='height:30px'></div>", unsafe_allow_html=True)
-                        if st.button("Phát toàn bộ bài đọc", key="play_full_reading"):
-                            try:
-                                from gtts import gTTS
-                                import io
-                                
-                                # Extract clean text from HTML content
-                                clean_content = BeautifulSoup(content[1], 'html.parser').get_text()
-                                
-                                tts = gTTS(
-                                    text=clean_content,
-                                    lang=tts_language[:2],
-                                    slow=False
-                                )
-                                
-                                audio_bytes = io.BytesIO()
-                                tts.write_to_fp(audio_bytes)
-                                audio_bytes.seek(0)
-                                
-                                st.session_state.tts_audio = audio_bytes
-                                st.rerun()
-                            
-                            except Exception as e:
-                                st.error(f"Lỗi khi tạo âm thanh: {str(e)}")
+                    except Exception as e:
+                        st.error(f"Lỗi khi tạo âm thanh: {str(e)}")
 
-                # Play audio if available
-                if 'tts_audio' in st.session_state:
-                    st.audio(st.session_state.tts_audio, format='audio/mp3')
+        # Play audio if available
+        if 'tts_audio' in st.session_state:
+            st.audio(st.session_state.tts_audio, format='audio/mp3')
 
-                if content[5]:  # is_completed
-                    st.success(f"✅ Bạn đã hoàn thành bài này với điểm số: {content[5]:.1f}%")
-                else:
-                    # Checkbox để ẩn hiện nội dung script
-                    hide_script = st.checkbox("Hide script", value=False)
+        if content[5]:  # is_completed
+            st.success(f"✅ Bạn đã hoàn thành bài này với điểm số: {content[5]:.1f}%")
+        else:
+            # Checkbox để ẩn hiện nội dung script
+            hide_script = st.checkbox("Hide script", value=False)
 
-                    # Nếu chưa được chọn thì hiển thị nội dung
-                    if not hide_script:
-                        st.markdown(content[1], unsafe_allow_html=True)
+            # Nếu chưa được chọn thì hiển thị nội dung
+            if not hide_script:
+                st.markdown(content[1], unsafe_allow_html=True)
 
-                    # Add paragraph-by-paragraph TTS
-                    # paragraphs = [p for p in BeautifulSoup(content[1], 'html.parser').find_all(['p', 'div']) if p.get_text().strip()]
-                    # for i, p in enumerate(paragraphs):
-                    #     st.markdown(str(p), unsafe_allow_html=True)
-                    #     if st.button("🔊", key=f"play_para_{i}"):
-                    #         try:
-                    #             from gtts import gTTS
-                    #             import io
-                    #             
-                    #             tts = gTTS(
-                    #                 text=p.get_text(),
-                    #                 lang=tts_language[:2],
-                    #                 slow=False
-                    #             )
-                    #             
-                    #             audio_bytes = io.BytesIO()
-                    #             tts.write_to_fp(audio_bytes)
-                    #             audio_bytes.seek(0)
-                    #             
-                    #             st.session_state.current_para_audio = audio_bytes
-                    #             st.rerun()
-                    #         except Exception as e:
-                    #             st.error(f"Lỗi khi đọc đoạn văn: {str(e)}")
+            # Add paragraph-by-paragraph TTS
+            # paragraphs = [p for p in BeautifulSoup(content[1], 'html.parser').find_all(['p', 'div']) if p.get_text().strip()]
+            # for i, p in enumerate(paragraphs):
+            #     st.markdown(str(p), unsafe_allow_html=True)
+            #     if st.button("🔊", key=f"play_para_{i}"):
+            #         try:
+            #             from gtts import gTTS
+            #             import io
+            #             
+            #             tts = gTTS(
+            #                 text=p.get_text(),
+            #                 lang=tts_language[:2],
+            #                 slow=False
+            #             )
+            #             
+            #             audio_bytes = io.BytesIO()
+            #             tts.write_to_fp(audio_bytes)
+            #             audio_bytes.seek(0)
+            #             
+            #             st.session_state.current_para_audio = audio_bytes
+            #             st.rerun()
+            #         except Exception as e:
+            #             st.error(f"Lỗi khi đọc đoạn văn: {str(e)}")
 
 
-                    if 'current_para_audio' in st.session_state:
-                        st.audio(st.session_state.current_para_audio, format='audio/mp3')
+            if 'current_para_audio' in st.session_state:
+                st.audio(st.session_state.current_para_audio, format='audio/mp3')
 
-                    # Hiển thị ảnh full width
-                    if content[2]:  # image_url
-                        try:
-                            if content[2].startswith(('http://', 'https://')):
-                                st.image(content[2], 
-                                        caption="Hình minh họa", 
-                                        use_container_width=True,
-                                        output_format="auto")
-                            else:
-                                if os.path.exists(content[2]):
-                                    st.image(content[2], 
-                                            caption="Hình minh họa", 
-                                            use_container_width=True,
-                                            output_format="auto")
-                                else:
-                                    st.warning("Không tìm thấy file hình ảnh")
-                        except Exception as e:
-                            st.error(f"Lỗi khi hiển thị hình ảnh: {str(e)}")
-
-                    # Audio vẫn giữ nguyên trong cột nếu cần
-                    if content[3]:  # audio_url
-                        try:
-                            if content[3].startswith(('http://', 'https://')):
-                                st.audio(content[3], format="audio/mp3")
-                            else:
-                                if os.path.exists(content[3]):
-                                    st.audio(content[3], format="audio/mp3")
-                                else:
-                                    st.warning("Không tìm thấy file âm thanh")
-                        except Exception as e:
-                            st.error(f"Lỗi khi hiển thị âm thanh: {str(e)}")
-
-                    questions = conn.execute("""
-                        SELECT id, question_type, question_text, options, correct_answer, points
-                        FROM reading_questions 
-                        WHERE content_id = ?
-                        ORDER BY id
-                    """, (selected_content_id[0],)).fetchall()
-
-                    if questions:
-                        with st.form("reading_test_form", clear_on_submit=True):
-                            st.divider()
-                            st.subheader("Phần Câu Hỏi")
-                            st.write(f"Trả lời các câu hỏi sau ({len(questions)} câu, tổng {sum(q[5] for q in questions)} điểm):")
-
-                            user_answers = {}
-
-                            for i, q in enumerate(questions, 1):
-                                st.markdown(f"**Câu {i}:** ({question_types[q[1]]}, {q[5]} điểm)")
-                                st.write(q[2])
-
-                                # Add TTS for questions
-                                with st.expander("🔊 Nghe câu hỏi", expanded=False):
-                                    if st.button("Phát câu hỏi", key=f"play_question_{q[0]}"):
-                                        try:
-                                            from gtts import gTTS
-                                            import io
-                                            
-                                            tts = gTTS(
-                                                text=q[2],
-                                                lang=tts_language[:2],
-                                                slow=False
-                                            )
-                                            
-                                            audio_bytes = io.BytesIO()
-                                            tts.write_to_fp(audio_bytes)
-                                            audio_bytes.seek(0)
-                                            
-                                            st.session_state[f"question_audio_{q[0]}"] = audio_bytes
-                                            st.rerun()
-                                        
-                                        except Exception as e:
-                                            st.error(f"Lỗi khi đọc câu hỏi: {str(e)}")
-
-                                    if f"question_audio_{q[0]}" in st.session_state:
-                                        st.audio(st.session_state[f"question_audio_{q[0]}"], format='audio/mp3')
-
-                                if q[1] == "multiple_choice":
-                                    options = json.loads(q[3]) if q[3] else []
-                                    selected_option = st.radio(
-                                        "Lựa chọn:",
-                                        options,
-                                        key=f"q_{q[0]}_options_{selected_content_id[0]}",
-                                        index=None
-                                    )
-                                    user_answers[q[0]] = selected_option
-
-                                elif q[1] == "true_false":
-                                    user_answers[q[0]] = st.radio(
-                                        "Chọn:",
-                                        ["Đúng", "Sai"],
-                                        key=f"q_{q[0]}_truefalse_{selected_content_id[0]}",
-                                        index=None
-                                    )
-                                else:
-                                    user_answers[q[0]] = st.text_input(
-                                        "Điền câu trả lời:",
-                                        key=f"q_{q[0]}_fillblank_{selected_content_id[0]}"
-                                    )
-
-                                st.write("---")
-
-                            submitted = st.form_submit_button("📤 Nộp Bài", type="primary")
-
-                        if submitted:
-                            if None in user_answers.values() or "" in user_answers.values():
-                                st.warning("Vui lòng trả lời tất cả câu hỏi trước khi nộp bài")
-                                st.stop()
-
-                            results = []
-                            correct_count = 0
-                            total_points = sum(q[5] for q in questions)
-                            earned_points = 0
-
-                            for q in questions:
-                                user_answer = user_answers.get(q[0], "")
-                                correct_answer = q[4]
-                                if q[1] == "true_false":
-                                    user_answer = "True" if user_answer == "Đúng" else "False"
-
-                                is_correct = str(user_answer).strip().lower() == str(correct_answer).strip().lower()
-                                if is_correct:
-                                    correct_count += 1
-                                    earned_points += q[5]
-
-                                results.append({
-                                    "question": q[2],
-                                    "type": q[1],
-                                    "your_answer": user_answer,
-                                    "correct_answer": correct_answer,
-                                    "is_correct": is_correct,
-                                    "points": q[5],
-                                    "earned": q[5] if is_correct else 0
-                                })
-
-                            score = (earned_points / total_points) * 100
-                            is_completed = score >= 90
-
-                            st.session_state.show_results = True
-                            st.session_state.results = {
-                                "score": score,
-                                "correct_count": correct_count,
-                                "total_questions": len(questions),
-                                "is_completed": is_completed,
-                                "details": results,
-                                "content_id": selected_content_id[0],
-                                "content_title": content[0]
-                            }
-
-                            try:
-                                cursor = conn.cursor()
-                                cursor.execute("""
-                                    INSERT OR REPLACE INTO user_reading_progress 
-                                    (user_id, content_id, score, is_completed, completed_at)
-                                    VALUES (?, ?, ?, ?, ?)
-                                """, (
-                                    user_id,
-                                    selected_content_id[0],
-                                    score,
-                                    is_completed,
-                                    datetime.now() if is_completed else None
-                                ))
-
-                                if is_completed:
-                                    cursor.execute("""
-                                        UPDATE users SET stickers = stickers + 1 
-                                        WHERE id = ? AND (
-                                            SELECT COUNT(*) FROM user_reading_progress 
-                                            WHERE user_id = ? AND content_id = ? AND is_completed = 1
-                                        ) = 0
-                                    """, (user_id, user_id, selected_content_id[0]))
-                                    st.session_state.user['stickers'] = conn.execute("""
-                                        SELECT stickers FROM users WHERE id = ?
-                                    """, (user_id,)).fetchone()[0]
-
-                                conn.commit()
-                            except Exception as e:
-                                st.error(f"Có lỗi khi lưu kết quả: {str(e)}")
-                            finally:
-                                conn.close()
-                            st.rerun()
+            # Hiển thị ảnh full width
+            if content[2]:  # image_url
+                try:
+                    if content[2].startswith(('http://', 'https://')):
+                        st.image(content[2], 
+                                caption="Hình minh họa", 
+                                use_container_width=True,
+                                output_format="auto")
                     else:
-                        st.warning("📝 Bài Reading này hiện chưa có câu hỏi đi kèm")
+                        if os.path.exists(content[2]):
+                            st.image(content[2], 
+                                    caption="Hình minh họa", 
+                                    use_container_width=True,
+                                    output_format="auto")
+                        else:
+                            st.warning("Không tìm thấy file hình ảnh")
+                except Exception as e:
+                    st.error(f"Lỗi khi hiển thị hình ảnh: {str(e)}")
+
+            # Audio vẫn giữ nguyên trong cột nếu cần
+            if content[3]:  # audio_url
+                try:
+                    if content[3].startswith(('http://', 'https://')):
+                        st.audio(content[3], format="audio/mp3")
+                    else:
+                        if os.path.exists(content[3]):
+                            st.audio(content[3], format="audio/mp3")
+                        else:
+                            st.warning("Không tìm thấy file âm thanh")
+                except Exception as e:
+                    st.error(f"Lỗi khi hiển thị âm thanh: {str(e)}")
+
+            questions = conn.execute("""
+                SELECT id, question_type, question_text, options, correct_answer, points
+                FROM reading_questions 
+                WHERE content_id = ?
+                ORDER BY id
+            """, (selected_content_id[0],)).fetchall()
+
+            if questions:
+                with st.form("reading_test_form", clear_on_submit=True):
+                    st.divider()
+                    st.subheader("Phần Câu Hỏi")
+                    st.write(f"Trả lời các câu hỏi sau ({len(questions)} câu, tổng {sum(q[5] for q in questions)} điểm):")
+
+                    user_answers = {}
+
+                    for i, q in enumerate(questions, 1):
+                        st.markdown(f"**Câu {i}:** ({question_types[q[1]]}, {q[5]} điểm)")
+                        st.write(q[2])
+
+                        # Add TTS for questions
+                        with st.expander("🔊 Nghe câu hỏi", expanded=False):
+                            if st.button("Phát câu hỏi", key=f"play_question_{q[0]}"):
+                                try:
+                                    from gtts import gTTS
+                                    import io
+                                    
+                                    tts = gTTS(
+                                        text=q[2],
+                                        lang=tts_language[:2],
+                                        slow=False
+                                    )
+                                    
+                                    audio_bytes = io.BytesIO()
+                                    tts.write_to_fp(audio_bytes)
+                                    audio_bytes.seek(0)
+                                    
+                                    st.session_state[f"question_audio_{q[0]}"] = audio_bytes
+                                    st.rerun()
+                                
+                                except Exception as e:
+                                    st.error(f"Lỗi khi đọc câu hỏi: {str(e)}")
+
+                            if f"question_audio_{q[0]}" in st.session_state:
+                                st.audio(st.session_state[f"question_audio_{q[0]}"], format='audio/mp3')
+
+                        if q[1] == "multiple_choice":
+                            options = json.loads(q[3]) if q[3] else []
+                            selected_option = st.radio(
+                                "Lựa chọn:",
+                                options,
+                                key=f"q_{q[0]}_options_{selected_content_id[0]}",
+                                index=None
+                            )
+                            user_answers[q[0]] = selected_option
+
+                        elif q[1] == "true_false":
+                            user_answers[q[0]] = st.radio(
+                                "Chọn:",
+                                ["Đúng", "Sai"],
+                                key=f"q_{q[0]}_truefalse_{selected_content_id[0]}",
+                                index=None
+                            )
+                        else:
+                            user_answers[q[0]] = st.text_input(
+                                "Điền câu trả lời:",
+                                key=f"q_{q[0]}_fillblank_{selected_content_id[0]}"
+                            )
+
+                        st.write("---")
+
+                    submitted = st.form_submit_button("📤 Nộp Bài", type="primary")
+
+                if submitted:
+                    if None in user_answers.values() or "" in user_answers.values():
+                        st.warning("Vui lòng trả lời tất cả câu hỏi trước khi nộp bài")
+                        st.stop()
+
+                    results = []
+                    correct_count = 0
+                    total_points = sum(q[5] for q in questions)
+                    earned_points = 0
+
+                    for q in questions:
+                        user_answer = user_answers.get(q[0], "")
+                        correct_answer = q[4]
+                        if q[1] == "true_false":
+                            user_answer = "True" if user_answer == "Đúng" else "False"
+
+                        is_correct = str(user_answer).strip().lower() == str(correct_answer).strip().lower()
+                        if is_correct:
+                            correct_count += 1
+                            earned_points += q[5]
+
+                        results.append({
+                            "question": q[2],
+                            "type": q[1],
+                            "your_answer": user_answer,
+                            "correct_answer": correct_answer,
+                            "is_correct": is_correct,
+                            "points": q[5],
+                            "earned": q[5] if is_correct else 0
+                        })
+
+                    score = (earned_points / total_points) * 100
+                    is_completed = score >= 90
+
+                    st.session_state.show_results = True
+                    st.session_state.results = {
+                        "score": score,
+                        "correct_count": correct_count,
+                        "total_questions": len(questions),
+                        "is_completed": is_completed,
+                        "details": results,
+                        "content_id": selected_content_id[0],
+                        "content_title": content[0]
+                    }
+
+                    try:
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO user_reading_progress 
+                            (user_id, content_id, score, is_completed, completed_at)
+                            VALUES (?, ?, ?, ?, ?)
+                        """, (
+                            user_id,
+                            selected_content_id[0],
+                            score,
+                            is_completed,
+                            datetime.now() if is_completed else None
+                        ))
+
+                        if is_completed:
+                            cursor.execute("""
+                                UPDATE users SET stickers = stickers + 1 
+                                WHERE id = ? AND (
+                                    SELECT COUNT(*) FROM user_reading_progress 
+                                    WHERE user_id = ? AND content_id = ? AND is_completed = 1
+                                ) = 0
+                            """, (user_id, user_id, selected_content_id[0]))
+                            st.session_state.user['stickers'] = conn.execute("""
+                                SELECT stickers FROM users WHERE id = ?
+                            """, (user_id,)).fetchone()[0]
+
+                        conn.commit()
+                    except Exception as e:
+                        st.error(f"Có lỗi khi lưu kết quả: {str(e)}")
+                    finally:
                         conn.close()
+                    st.rerun()
+            else:
+                st.warning("📝 Bài Reading này hiện chưa có câu hỏi đi kèm")
+                conn.close()
 
     if st.session_state.show_results:
         results = st.session_state.results
